@@ -4,10 +4,15 @@
 #include "discovery/usbdiscovery.h"
 
 #include <QApplication>
+#include <QDateTime>
+#include <QFile>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -47,6 +52,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_resetSpectrumBtn->setToolTip(
         tr("Clear the spectrum accumulation on the device.\n"
            "The plot auto-refreshes about every 2 seconds while connected."));
+    m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
+    m_saveSpectrumBtn->setToolTip(
+        tr("Save the last received spectrum (counts, live time, calibration) to a CSV file."));
     m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
     m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
     m_disconnectBtn->setToolTip(tr("Close USB connection and release the device"));
@@ -55,6 +63,7 @@ MainWindow::MainWindow(QWidget *parent)
     connLay->addWidget(m_connectBtn);
     connLay->addWidget(m_disconnectBtn);
     connLay->addWidget(m_resetSpectrumBtn);
+    connLay->addWidget(m_saveSpectrumBtn);
     root->addWidget(connBox);
 
     // Live values
@@ -66,12 +75,16 @@ MainWindow::MainWindow(QWidget *parent)
     m_doseLabel = new QLabel(QStringLiteral("—"), this);
     m_countLabel = new QLabel(QStringLiteral("—"), this);
     m_tempLabel = new QLabel(QStringLiteral("—"), this);
+    m_spectrumLiveLabel = new QLabel(QStringLiteral("—"), this);
+    m_spectrumLiveLabel->setToolTip(
+        tr("Live time of the spectrum currently shown (device accumulation clock)."));
     form->addRow(tr("Status"), m_statusLabel);
     form->addRow(tr("Serial"), m_serialLabel);
     form->addRow(tr("Firmware"), m_fwLabel);
     form->addRow(tr("Dose rate (protocol units)"), m_doseLabel);
     form->addRow(tr("Count rate (CPS)"), m_countLabel);
     form->addRow(tr("Temperature"), m_tempLabel);
+    form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
     root->addWidget(liveBox);
 
     m_spectrum = new SpectrumWidget(this);
@@ -95,6 +108,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
     connect(m_resetSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onResetSpectrum);
+    connect(m_saveSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onSaveSpectrum);
 
     connect(m_device, &QtRadiacode::RadiaCodeDevice::connected, this, &MainWindow::onConnected);
     connect(m_device, &QtRadiacode::RadiaCodeDevice::disconnected, this, &MainWindow::onDisconnected);
@@ -165,6 +179,10 @@ void MainWindow::onResetSpectrum()
     }
     appendLog(tr("Resetting spectrum on device…"));
     m_spectrum->clear();
+    m_hasSpectrum = false;
+    m_lastSpectrum = {};
+    m_spectrumLiveLabel->setText(QStringLiteral("—"));
+    m_saveSpectrumBtn->setEnabled(false);
     m_device->spectrumReset();
     // Next auto-poll will reload; also request once after a short delay.
     QTimer::singleShot(300, this, [this] {
@@ -172,6 +190,90 @@ void MainWindow::onResetSpectrum()
             m_device->requestSpectrum();
         }
     });
+}
+
+QString MainWindow::formatDuration(quint32 sec)
+{
+    const quint32 h = sec / 3600;
+    const quint32 m = (sec % 3600) / 60;
+    const quint32 s = sec % 60;
+    if (h > 0) {
+        return QStringLiteral("%1 h %2 min %3 s (%4 s total)")
+            .arg(h)
+            .arg(m, 2, 10, QLatin1Char('0'))
+            .arg(s, 2, 10, QLatin1Char('0'))
+            .arg(sec);
+    }
+    if (m > 0) {
+        return QStringLiteral("%1 min %2 s (%3 s total)")
+            .arg(m)
+            .arg(s, 2, 10, QLatin1Char('0'))
+            .arg(sec);
+    }
+    return QStringLiteral("%1 s").arg(sec);
+}
+
+void MainWindow::onSaveSpectrum()
+{
+    if (!m_hasSpectrum || m_lastSpectrum.counts.isEmpty()) {
+        appendLog(tr("No spectrum to save yet."));
+        return;
+    }
+
+    const QString serial = m_device->serialNumber().isEmpty()
+        ? QStringLiteral("unknown")
+        : m_device->serialNumber();
+    const QString defaultName = QStringLiteral("%1_spectrum_%2s_%3.csv")
+                                    .arg(serial)
+                                    .arg(m_lastSpectrum.durationSec)
+                                    .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+
+    const QString startDir =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getSaveFileName(
+        this,
+        tr("Save spectrum"),
+        startDir + QLatin1Char('/') + defaultName,
+        tr("CSV files (*.csv);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        appendLog(tr("Cannot write file: %1").arg(path));
+        return;
+    }
+
+    QTextStream out(&f);
+    out.setRealNumberNotation(QTextStream::SmartNotation);
+    out.setRealNumberPrecision(8);
+
+    // Metadata header (comment lines — easy to skip when plotting)
+    out << "# QtRadiacode spectrum export\n";
+    out << "# saved_utc=" << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
+    out << "# device_serial=" << serial << "\n";
+    out << "# firmware=" << m_device->firmwareVersion() << "\n";
+    out << "# live_time_sec=" << m_lastSpectrum.durationSec << "\n";
+    out << "# live_time_human=" << formatDuration(m_lastSpectrum.durationSec) << "\n";
+    out << "# calib_a0=" << m_lastSpectrum.a0 << "\n";
+    out << "# calib_a1=" << m_lastSpectrum.a1 << "\n";
+    out << "# calib_a2=" << m_lastSpectrum.a2 << "\n";
+    out << "# channels=" << m_lastSpectrum.counts.size() << "\n";
+    out << "# energy_keV = a0 + a1*channel + a2*channel^2\n";
+    out << "channel,counts,energy_keV\n";
+
+    for (int i = 0; i < m_lastSpectrum.counts.size(); ++i) {
+        const double e = QtRadiacode::spectrumChannelToEnergy(
+            i, m_lastSpectrum.a0, m_lastSpectrum.a1, m_lastSpectrum.a2);
+        out << i << ',' << m_lastSpectrum.counts.at(i) << ',' << e << '\n';
+    }
+    f.close();
+
+    appendLog(tr("Spectrum saved (%1 s live, %2 ch) → %3")
+                  .arg(m_lastSpectrum.durationSec)
+                  .arg(m_lastSpectrum.counts.size())
+                  .arg(path));
 }
 
 void MainWindow::pollData()
@@ -219,9 +321,12 @@ void MainWindow::onDisconnected()
     m_doseLabel->setText(QStringLiteral("—"));
     m_countLabel->setText(QStringLiteral("—"));
     m_tempLabel->setText(QStringLiteral("—"));
+    m_spectrumLiveLabel->setText(QStringLiteral("—"));
     m_serialLabel->setText(QStringLiteral("—"));
     m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
+    m_hasSpectrum = false;
+    m_lastSpectrum = {};
     appendLog(tr("Disconnected"));
     refreshDeviceList();
 }
@@ -306,10 +411,17 @@ void MainWindow::onDataBuf(const QList<QtRadiacode::RcDataItem> &items)
 
 void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
 {
+    m_lastSpectrum = sp;
+    m_hasSpectrum = !sp.counts.isEmpty();
     m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
+    m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
+    m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
     // Quiet status — avoid flooding Messages every 2 s.
     statusBar()->showMessage(
-        tr("Spectrum: %1 ch, live %2 s").arg(sp.counts.size()).arg(sp.durationSec), 2000);
+        tr("Spectrum: %1 ch, live %2")
+            .arg(sp.counts.size())
+            .arg(formatDuration(sp.durationSec)),
+        2000);
 }
 
 void MainWindow::setConnectedUi(bool connected)
@@ -317,6 +429,8 @@ void MainWindow::setConnectedUi(bool connected)
     m_connectBtn->setEnabled(!connected);
     m_disconnectBtn->setEnabled(connected);
     m_resetSpectrumBtn->setEnabled(connected);
+    // Save uses last cached spectrum — allowed offline too after a capture.
+    m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
     m_deviceCombo->setEnabled(!connected);
     m_refreshBtn->setEnabled(!connected);
 }

@@ -23,6 +23,7 @@ private slots:
     void onConnectClicked();
     void onDisconnectClicked();
     void onResetSpectrum();
+    void onSaveSpectrum();
     void pollData();
 
     void onConnected();
@@ -35,6 +36,7 @@ private slots:
 private:
     void setConnectedUi(bool connected);
     void appendLog(const QString &line);
+    static QString formatDuration(quint32 sec);
 
     QtRadiacode::RadiaCodeDevice *m_device = nullptr;
     QTimer *m_pollTimer = nullptr;
@@ -45,6 +47,7 @@ private:
     QPushButton *m_connectBtn = nullptr;
     QPushButton *m_disconnectBtn = nullptr;
     QPushButton *m_resetSpectrumBtn = nullptr;
+    QPushButton *m_saveSpectrumBtn = nullptr;
 
     QLabel *m_statusLabel = nullptr;
     QLabel *m_serialLabel = nullptr;
@@ -52,7 +55,10 @@ private:
     QLabel *m_doseLabel = nullptr;
     QLabel *m_countLabel = nullptr;
     QLabel *m_tempLabel = nullptr;
+    QLabel *m_spectrumLiveLabel = nullptr;
     QLabel *m_logLabel = nullptr;
 
     SpectrumWidget *m_spectrum = nullptr;
+    QtRadiacode::RcSpectrum m_lastSpectrum;
+    bool m_hasSpectrum = false;
 };
