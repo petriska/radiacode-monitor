@@ -6,8 +6,10 @@
 
 #include <QApplication>
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -227,6 +229,7 @@ void MainWindow::onSaveSpectrum()
         : m_device->serialNumber();
     const QString stamp =
         QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    // Basename without extension — suffix is applied from the selected format.
     const QString baseName = QStringLiteral("%1_spectrum_%2s_%3")
                                  .arg(serial)
                                  .arg(m_lastSpectrum.durationSec)
@@ -234,23 +237,52 @@ void MainWindow::onSaveSpectrum()
 
     const QString startDir =
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    QString selectedFilter;
-    QString path = QFileDialog::getSaveFileName(
-        this,
-        tr("Save spectrum"),
-        startDir + QLatin1Char('/') + baseName + QStringLiteral(".csv"),
-        SpectrumExport::formatFilterString(),
-        &selectedFilter);
-    if (path.isEmpty()) {
+
+    QFileDialog dlg(this, tr("Save spectrum"));
+    dlg.setAcceptMode(QFileDialog::AcceptSave);
+    dlg.setFileMode(QFileDialog::AnyFile);
+    dlg.setNameFilters(SpectrumExport::formatFilterString().split(QStringLiteral(";;")));
+    dlg.selectNameFilter(QStringLiteral("CSV (*.csv)"));
+    dlg.setDirectory(startDir);
+    dlg.selectFile(baseName); // no extension in the name field
+    dlg.setDefaultSuffix(SpectrumExport::defaultExtension(SpectrumExport::Format::Csv));
+    dlg.setOption(QFileDialog::DontConfirmOverwrite, false);
+
+    // When the user changes CSV / TKA / N42, update default suffix and filename.
+    QObject::connect(
+        &dlg,
+        &QFileDialog::filterSelected,
+        &dlg,
+        [&dlg](const QString &filter) {
+            const auto fmt = SpectrumExport::formatFromFilter(filter);
+            const QString ext = SpectrumExport::defaultExtension(fmt);
+            dlg.setDefaultSuffix(ext);
+
+            QStringList sel = dlg.selectedFiles();
+            if (sel.isEmpty()) {
+                return;
+            }
+            // Keep directory + basename; force extension for the new format.
+            const QFileInfo fi(sel.constFirst());
+            const QString stem = SpectrumExport::stripKnownExtension(fi.fileName());
+            if (stem.isEmpty()) {
+                return;
+            }
+            dlg.selectFile(fi.dir().filePath(stem)); // still without ext; defaultSuffix adds it
+        });
+
+    if (dlg.exec() != QDialog::Accepted) {
         return;
     }
 
-    const auto format = SpectrumExport::formatFromFilter(selectedFilter);
-    const QString ext = SpectrumExport::defaultExtension(format);
-    if (!path.endsWith(QLatin1Char('.') + ext, Qt::CaseInsensitive)
-        && !path.contains(QLatin1Char('.'))) {
-        path += QLatin1Char('.') + ext;
+    QStringList files = dlg.selectedFiles();
+    if (files.isEmpty()) {
+        return;
     }
+
+    const auto format = SpectrumExport::formatFromFilter(dlg.selectedNameFilter());
+    // Always finalize extension from the chosen format (not from a stale name).
+    QString path = SpectrumExport::withExtension(files.constFirst(), format);
 
     const QString err = SpectrumExport::writeSpectrumFile(
         path,

@@ -225,6 +225,28 @@ QString defaultExtension(Format format)
     }
 }
 
+QString stripKnownExtension(const QString &path)
+{
+    QString p = path;
+    static const QStringList exts = {
+        QStringLiteral(".csv"),
+        QStringLiteral(".tka"),
+        QStringLiteral(".n42"),
+    };
+    for (const QString &e : exts) {
+        if (p.endsWith(e, Qt::CaseInsensitive)) {
+            p.chop(e.size());
+            break;
+        }
+    }
+    return p;
+}
+
+QString withExtension(const QString &path, Format format)
+{
+    return stripKnownExtension(path) + QLatin1Char('.') + defaultExtension(format);
+}
+
 QString writeSpectrumFile(
     const QString &path,
     Format format,
