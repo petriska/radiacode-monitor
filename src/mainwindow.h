@@ -22,7 +22,6 @@ private slots:
     void refreshDeviceList();
     void onConnectClicked();
     void onDisconnectClicked();
-    void onRefreshSpectrum();
     void onResetSpectrum();
     void pollData();
 
@@ -39,12 +38,12 @@ private:
 
     QtRadiacode::RadiaCodeDevice *m_device = nullptr;
     QTimer *m_pollTimer = nullptr;
+    int m_pollTick = 0;
 
     QComboBox *m_deviceCombo = nullptr;
     QPushButton *m_refreshBtn = nullptr;
     QPushButton *m_connectBtn = nullptr;
     QPushButton *m_disconnectBtn = nullptr;
-    QPushButton *m_spectrumBtn = nullptr;
     QPushButton *m_resetSpectrumBtn = nullptr;
 
     QLabel *m_statusLabel = nullptr;

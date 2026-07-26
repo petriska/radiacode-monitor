@@ -43,13 +43,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_refreshBtn = new QPushButton(tr("Refresh"), this);
     m_connectBtn = new QPushButton(tr("Connect"), this);
     m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
-    m_spectrumBtn = new QPushButton(tr("Refresh spectrum"), this);
-    m_spectrumBtn->setToolTip(
-        tr("Download the current energy spectrum from the device and redraw the plot.\n"
-           "Also runs automatically once after Connect."));
     m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), this);
     m_resetSpectrumBtn->setToolTip(
-        tr("Clear the spectrum accumulation on the device, then reload an empty/new spectrum."));
+        tr("Clear the spectrum accumulation on the device.\n"
+           "The plot auto-refreshes about every 2 seconds while connected."));
     m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
     m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
     m_disconnectBtn->setToolTip(tr("Close USB connection and release the device"));
@@ -57,7 +54,6 @@ MainWindow::MainWindow(QWidget *parent)
     connLay->addWidget(m_refreshBtn);
     connLay->addWidget(m_connectBtn);
     connLay->addWidget(m_disconnectBtn);
-    connLay->addWidget(m_spectrumBtn);
     connLay->addWidget(m_resetSpectrumBtn);
     root->addWidget(connBox);
 
@@ -98,7 +94,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshDeviceList);
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
-    connect(m_spectrumBtn, &QPushButton::clicked, this, &MainWindow::onRefreshSpectrum);
     connect(m_resetSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onResetSpectrum);
 
     connect(m_device, &QtRadiacode::RadiaCodeDevice::connected, this, &MainWindow::onConnected);
@@ -163,14 +158,6 @@ void MainWindow::onDisconnectClicked()
     m_device->disconnectFromDevice();
 }
 
-void MainWindow::onRefreshSpectrum()
-{
-    if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
-        appendLog(tr("Requesting spectrum…"));
-        m_device->requestSpectrum();
-    }
-}
-
 void MainWindow::onResetSpectrum()
 {
     if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
@@ -179,7 +166,7 @@ void MainWindow::onResetSpectrum()
     appendLog(tr("Resetting spectrum on device…"));
     m_spectrum->clear();
     m_device->spectrumReset();
-    // Device needs a moment after reset; request a fresh spectrum shortly.
+    // Next auto-poll will reload; also request once after a short delay.
     QTimer::singleShot(300, this, [this] {
         if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
             m_device->requestSpectrum();
@@ -192,9 +179,15 @@ void MainWindow::pollData()
     if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
         return;
     }
-    // Live rate first; spectrum is on-demand (heavy).
+    // Every 1 s: dose/count (+ temperature).
     m_device->requestDataBuf();
     m_device->requestTemperature();
+
+    // Every 2 s: spectrum (heavier transfer — not every tick).
+    ++m_pollTick;
+    if (m_pollTick % 2 == 0) {
+        m_device->requestSpectrum();
+    }
 }
 
 void MainWindow::onConnected()
@@ -203,13 +196,14 @@ void MainWindow::onConnected()
     m_serialLabel->setText(m_device->serialNumber());
     m_fwLabel->setText(m_device->firmwareVersion());
     m_statusLabel->setText(tr("Connected"));
-    appendLog(tr("Connected %1 fw %2")
+    appendLog(tr("Connected %1 fw %2 — live rates 1 s, spectrum ~2 s")
                   .arg(m_device->serialNumber(), m_device->firmwareVersion()));
-    // Kick live data immediately, then spectrum (so a slow spectrum read cannot
-    // starve the first dose/count samples for a full second).
-    pollData();
+    m_pollTick = 0;
+    // First live sample immediately; first spectrum on the next even tick / shortly after.
+    m_device->requestDataBuf();
+    m_device->requestTemperature();
     m_pollTimer->start();
-    QTimer::singleShot(200, this, [this] {
+    QTimer::singleShot(300, this, [this] {
         if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
             m_device->requestSpectrum();
         }
@@ -219,6 +213,7 @@ void MainWindow::onConnected()
 void MainWindow::onDisconnected()
 {
     m_pollTimer->stop();
+    m_pollTick = 0;
     setConnectedUi(false);
     m_statusLabel->setText(tr("Disconnected"));
     m_doseLabel->setText(QStringLiteral("—"));
@@ -312,16 +307,15 @@ void MainWindow::onDataBuf(const QList<QtRadiacode::RcDataItem> &items)
 void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
 {
     m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
-    appendLog(tr("Spectrum: %1 channels, live %2 s")
-                  .arg(sp.counts.size())
-                  .arg(sp.durationSec));
+    // Quiet status — avoid flooding Messages every 2 s.
+    statusBar()->showMessage(
+        tr("Spectrum: %1 ch, live %2 s").arg(sp.counts.size()).arg(sp.durationSec), 2000);
 }
 
 void MainWindow::setConnectedUi(bool connected)
 {
     m_connectBtn->setEnabled(!connected);
     m_disconnectBtn->setEnabled(connected);
-    m_spectrumBtn->setEnabled(connected);
     m_resetSpectrumBtn->setEnabled(connected);
     m_deviceCombo->setEnabled(!connected);
     m_refreshBtn->setEnabled(!connected);
