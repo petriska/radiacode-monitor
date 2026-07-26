@@ -201,7 +201,6 @@ bool writeNpes(
 {
     quint64 totalCounts = 0;
     QJsonArray spectrumArr;
-    spectrumArr.reserve(sp.counts.size());
     for (quint32 c : sp.counts) {
         spectrumArr.append(static_cast<qint64>(c));
         totalCounts += c;
