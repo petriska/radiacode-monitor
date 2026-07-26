@@ -111,11 +111,17 @@ void MainWindow::onConnectClicked()
     const QString serial = m_deviceCombo->currentData().toString();
     appendLog(tr("Connecting USB %1…").arg(serial.isEmpty() ? tr("(first)") : serial));
     m_connectBtn->setEnabled(false);
+    m_refreshBtn->setEnabled(false);
+    m_deviceCombo->setEnabled(false);
     m_device->connectUsb(serial);
 }
 
 void MainWindow::onDisconnectClicked()
 {
+    // Stop polling immediately so no new request* race the close path.
+    m_pollTimer->stop();
+    m_disconnectBtn->setEnabled(false);
+    appendLog(tr("Disconnecting…"));
     m_device->disconnectFromDevice();
 }
 
@@ -154,17 +160,24 @@ void MainWindow::onDisconnected()
     m_statusLabel->setText(tr("Disconnected"));
     m_doseLabel->setText(QStringLiteral("—"));
     m_countLabel->setText(QStringLiteral("—"));
+    m_tempLabel->setText(QStringLiteral("—"));
+    m_serialLabel->setText(QStringLiteral("—"));
+    m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
     appendLog(tr("Disconnected"));
+    refreshDeviceList();
 }
 
 void MainWindow::onError(const QString &message)
 {
     appendLog(tr("Error: %1").arg(message));
-    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
-        m_connectBtn->setEnabled(true);
+    m_pollTimer->stop();
+    // Connect failures now return to Disconnected; restore full idle UI.
+    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected
+        && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connecting) {
+        setConnectedUi(false);
+        m_statusLabel->setText(tr("Error — see log"));
     }
-    // Non-modal status; use status bar-ish log only (avoid spam dialogs on poll errors)
 }
 
 void MainWindow::onStateChanged(QtRadiacode::RadiaCodeDevice::State state)
@@ -173,6 +186,9 @@ void MainWindow::onStateChanged(QtRadiacode::RadiaCodeDevice::State state)
     switch (state) {
     case S::Disconnected:
         m_statusLabel->setText(tr("Disconnected"));
+        if (!m_pollTimer->isActive()) {
+            setConnectedUi(false);
+        }
         break;
     case S::Connecting:
         m_statusLabel->setText(tr("Connecting…"));
@@ -185,6 +201,7 @@ void MainWindow::onStateChanged(QtRadiacode::RadiaCodeDevice::State state)
         break;
     case S::Error:
         m_statusLabel->setText(tr("Error"));
+        setConnectedUi(false);
         break;
     }
 }
