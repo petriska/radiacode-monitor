@@ -22,6 +22,7 @@ private slots:
     void onConnectClicked();
     void onDisconnectClicked();
     void onRefreshSpectrum();
+    void onResetSpectrum();
     void pollData();
 
     void onConnected();
@@ -43,6 +44,7 @@ private:
     QPushButton *m_connectBtn = nullptr;
     QPushButton *m_disconnectBtn = nullptr;
     QPushButton *m_spectrumBtn = nullptr;
+    QPushButton *m_resetSpectrumBtn = nullptr;
 
     QLabel *m_statusLabel = nullptr;
     QLabel *m_serialLabel = nullptr;

@@ -37,6 +37,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_spectrumBtn->setToolTip(
         tr("Download the current energy spectrum from the device and redraw the plot.\n"
            "Also runs automatically once after Connect."));
+    m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), this);
+    m_resetSpectrumBtn->setToolTip(
+        tr("Clear the spectrum accumulation on the device, then reload an empty/new spectrum."));
     m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
     m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
     m_disconnectBtn->setToolTip(tr("Close USB connection and release the device"));
@@ -45,6 +48,7 @@ MainWindow::MainWindow(QWidget *parent)
     connLay->addWidget(m_connectBtn);
     connLay->addWidget(m_disconnectBtn);
     connLay->addWidget(m_spectrumBtn);
+    connLay->addWidget(m_resetSpectrumBtn);
     root->addWidget(connBox);
 
     // Live values
@@ -85,6 +89,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
     connect(m_spectrumBtn, &QPushButton::clicked, this, &MainWindow::onRefreshSpectrum);
+    connect(m_resetSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onResetSpectrum);
 
     connect(m_device, &QtRadiacode::RadiaCodeDevice::connected, this, &MainWindow::onConnected);
     connect(m_device, &QtRadiacode::RadiaCodeDevice::disconnected, this, &MainWindow::onDisconnected);
@@ -143,8 +148,25 @@ void MainWindow::onDisconnectClicked()
 void MainWindow::onRefreshSpectrum()
 {
     if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
+        appendLog(tr("Requesting spectrum…"));
         m_device->requestSpectrum();
     }
+}
+
+void MainWindow::onResetSpectrum()
+{
+    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+        return;
+    }
+    appendLog(tr("Resetting spectrum on device…"));
+    m_spectrum->clear();
+    m_device->spectrumReset();
+    // Device needs a moment after reset; request a fresh spectrum shortly.
+    QTimer::singleShot(300, this, [this] {
+        if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
+            m_device->requestSpectrum();
+        }
+    });
 }
 
 void MainWindow::pollData()
@@ -255,6 +277,7 @@ void MainWindow::setConnectedUi(bool connected)
     m_connectBtn->setEnabled(!connected);
     m_disconnectBtn->setEnabled(connected);
     m_spectrumBtn->setEnabled(connected);
+    m_resetSpectrumBtn->setEnabled(connected);
     m_deviceCombo->setEnabled(!connected);
     m_refreshBtn->setEnabled(!connected);
 }
