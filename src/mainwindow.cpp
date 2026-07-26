@@ -189,10 +189,12 @@ void MainWindow::onResetSpectrum()
 
 void MainWindow::pollData()
 {
-    if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
-        m_device->requestDataBuf();
-        m_device->requestTemperature();
+    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+        return;
     }
+    // Live rate first; spectrum is on-demand (heavy).
+    m_device->requestDataBuf();
+    m_device->requestTemperature();
 }
 
 void MainWindow::onConnected()
@@ -203,9 +205,15 @@ void MainWindow::onConnected()
     m_statusLabel->setText(tr("Connected"));
     appendLog(tr("Connected %1 fw %2")
                   .arg(m_device->serialNumber(), m_device->firmwareVersion()));
-    m_pollTimer->start();
-    m_device->requestSpectrum();
+    // Kick live data immediately, then spectrum (so a slow spectrum read cannot
+    // starve the first dose/count samples for a full second).
     pollData();
+    m_pollTimer->start();
+    QTimer::singleShot(200, this, [this] {
+        if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
+            m_device->requestSpectrum();
+        }
+    });
 }
 
 void MainWindow::onDisconnected()
@@ -227,14 +235,20 @@ void MainWindow::onError(const QString &message)
 {
     const QString line = tr("Error: %1").arg(message);
     appendLog(line);
-    m_pollTimer->stop();
-    // Connect failures now return to Disconnected; restore full idle UI.
-    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected
-        && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connecting) {
-        setConnectedUi(false);
-        m_statusLabel->setText(tr("Error"));
-        m_statusLabel->setToolTip(message);
+
+    using S = QtRadiacode::RadiaCodeDevice::State;
+    const S st = m_device->state();
+
+    // A single failed USB op (e.g. one bulk timeout) must NOT stop live polling.
+    // Only tear down UI when we are no longer in a live session.
+    if (st == S::Connected || st == S::Connecting) {
+        return;
     }
+
+    m_pollTimer->stop();
+    setConnectedUi(false);
+    m_statusLabel->setText(tr("Error"));
+    m_statusLabel->setToolTip(message);
 }
 
 void MainWindow::onStateChanged(QtRadiacode::RadiaCodeDevice::State state)
@@ -265,20 +279,33 @@ void MainWindow::onStateChanged(QtRadiacode::RadiaCodeDevice::State state)
 
 void MainWindow::onDataBuf(const QList<QtRadiacode::RcDataItem> &items)
 {
+    // Prefer the latest RealTime / Rare sample in this batch.
+    const QtRadiacode::RcRealTimeData *rt = nullptr;
+    const QtRadiacode::RcRareData *rare = nullptr;
     for (const auto &item : items) {
         if (item.kind == QtRadiacode::RcDataKind::RealTime) {
-            m_countLabel->setText(
-                QStringLiteral("%1 CPS (±%2%)")
-                    .arg(item.realTime.countRate, 0, 'f', 2)
-                    .arg(item.realTime.countRateErr, 0, 'f', 1));
-            // Protocol dose_rate is same units as Python (µR/h scale internally as float)
-            m_doseLabel->setText(QString::number(item.realTime.doseRate, 'g', 6));
+            rt = &item.realTime;
         } else if (item.kind == QtRadiacode::RcDataKind::Rare) {
-            m_tempLabel->setText(
-                QStringLiteral("%1 °C  charge %2%")
-                    .arg(item.rare.temperatureC, 0, 'f', 1)
-                    .arg(item.rare.chargeLevel, 0, 'f', 0));
+            rare = &item.rare;
+        } else if (item.kind == QtRadiacode::RcDataKind::Raw) {
+            // Fallback when device only pushed raw rates.
+            m_countLabel->setText(QStringLiteral("%1 CPS").arg(item.raw.countRate, 0, 'f', 2));
+            m_doseLabel->setText(QString::number(item.raw.doseRate, 'g', 6));
         }
+    }
+    if (rt) {
+        m_countLabel->setText(
+            QStringLiteral("%1 CPS (±%2%)")
+                .arg(rt->countRate, 0, 'f', 2)
+                .arg(rt->countRateErr, 0, 'f', 1));
+        // Protocol dose_rate units match the Python library (device-native).
+        m_doseLabel->setText(QString::number(rt->doseRate, 'g', 6));
+    }
+    if (rare) {
+        m_tempLabel->setText(
+            QStringLiteral("%1 °C  charge %2%")
+                .arg(rare->temperatureC, 0, 'f', 1)
+                .arg(rare->chargeLevel, 0, 'f', 0));
     }
 }
 
