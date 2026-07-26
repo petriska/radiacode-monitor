@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QPushButton>
+#include <QStatusBar>
 #include <QTimer>
 
 class SpectrumWidget;

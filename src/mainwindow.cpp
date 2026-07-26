@@ -33,7 +33,13 @@ MainWindow::MainWindow(QWidget *parent)
     m_refreshBtn = new QPushButton(tr("Refresh"), this);
     m_connectBtn = new QPushButton(tr("Connect"), this);
     m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
-    m_spectrumBtn = new QPushButton(tr("Spectrum"), this);
+    m_spectrumBtn = new QPushButton(tr("Refresh spectrum"), this);
+    m_spectrumBtn->setToolTip(
+        tr("Download the current energy spectrum from the device and redraw the plot.\n"
+           "Also runs automatically once after Connect."));
+    m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
+    m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
+    m_disconnectBtn->setToolTip(tr("Close USB connection and release the device"));
     connLay->addWidget(m_deviceCombo, 1);
     connLay->addWidget(m_refreshBtn);
     connLay->addWidget(m_connectBtn);
@@ -61,10 +67,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_spectrum = new SpectrumWidget(this);
     root->addWidget(m_spectrum, 1);
 
-    m_logLabel = new QLabel(this);
+    // Last events / errors — also mirrored to the status bar (bottom of the window).
+    auto *msgBox = new QGroupBox(tr("Messages (log)"), this);
+    auto *msgLay = new QVBoxLayout(msgBox);
+    m_logLabel = new QLabel(tr("Ready."), this);
     m_logLabel->setWordWrap(true);
-    m_logLabel->setStyleSheet(QStringLiteral("color: #aaa; font-size: 11px;"));
-    root->addWidget(m_logLabel);
+    m_logLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_logLabel->setMinimumHeight(48);
+    m_logLabel->setStyleSheet(
+        QStringLiteral("color: #ddd; font-size: 12px; background: #1a1a1e; padding: 6px;"));
+    msgLay->addWidget(m_logLabel);
+    root->addWidget(msgBox);
+
+    statusBar()->showMessage(tr("Ready — pick a USB device and Connect."));
 
     connect(m_refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshDeviceList);
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
@@ -170,13 +185,15 @@ void MainWindow::onDisconnected()
 
 void MainWindow::onError(const QString &message)
 {
-    appendLog(tr("Error: %1").arg(message));
+    const QString line = tr("Error: %1").arg(message);
+    appendLog(line);
     m_pollTimer->stop();
     // Connect failures now return to Disconnected; restore full idle UI.
     if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected
         && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connecting) {
         setConnectedUi(false);
-        m_statusLabel->setText(tr("Error — see log"));
+        m_statusLabel->setText(tr("Error"));
+        m_statusLabel->setToolTip(message);
     }
 }
 
@@ -245,4 +262,5 @@ void MainWindow::setConnectedUi(bool connected)
 void MainWindow::appendLog(const QString &line)
 {
     m_logLabel->setText(line);
+    statusBar()->showMessage(line, 15000);
 }
