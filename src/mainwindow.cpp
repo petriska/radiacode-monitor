@@ -3,6 +3,7 @@
 
 #include "discovery/usbdiscovery.h"
 
+#include <QApplication>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -17,6 +18,15 @@ MainWindow::MainWindow(QWidget *parent)
     resize(900, 600);
 
     m_device = new QtRadiacode::RadiaCodeDevice(this);
+
+    // Always release USB on quit so the device is not left claimed after kill/close.
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        m_pollTimer->stop();
+        if (m_device
+            && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Disconnected) {
+            m_device->disconnectFromDevice();
+        }
+    });
     m_pollTimer = new QTimer(this);
     m_pollTimer->setInterval(1000);
     connect(m_pollTimer, &QTimer::timeout, this, &MainWindow::pollData);
@@ -103,6 +113,14 @@ MainWindow::MainWindow(QWidget *parent)
 
     setConnectedUi(false);
     refreshDeviceList();
+}
+
+MainWindow::~MainWindow()
+{
+    m_pollTimer->stop();
+    if (m_device && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Disconnected) {
+        m_device->disconnectFromDevice();
+    }
 }
 
 void MainWindow::refreshDeviceList()
