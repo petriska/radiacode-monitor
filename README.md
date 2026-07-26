@@ -35,7 +35,21 @@ cmake --build .
 
 Pin the library via FetchContent or git submodule to private `qtradiacode` `v0.1.0`.
 
+## Features (later)
+
+- Spectrum live time, total counts
+- Save spectrum: CSV, TKA, ANSI N42.42, [NPES-JSON](https://github.com/OpenGammaProject/NPES-JSON)
+- Auto-refresh spectrum (~2 s)
+
 ## Notes
 
 - Prefer **USB** while Home Assistant holds BLE.
 - Linux udev: see `qtradiacode/platform/linux/99-radiacode.rules`.
+
+## Development
+
+This application (and the companion [qtradiacode](https://github.com/petriska/qtradiacode) library) was built with substantial assistance from **[Grok](https://x.ai/)** (xAI) — coding, debugging, and docs — under human direction for goals, hardware checks, and review.
+
+## License
+
+MIT (same spirit as QtRadiacode). See the library repository for protocol attribution.
