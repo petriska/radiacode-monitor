@@ -416,12 +416,18 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
     m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
     m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
-    // Quiet status — avoid flooding Messages every 2 s.
+
+    quint64 totalCounts = 0;
+    for (quint32 c : sp.counts) {
+        totalCounts += c;
+    }
+    // ch = number of energy channels; total = sum of counts; live = accumulation time
     statusBar()->showMessage(
-        tr("Spectrum: %1 ch, live %2")
+        tr("Spectrum: total %1 counts | %2 channels | live time %3")
+            .arg(totalCounts)
             .arg(sp.counts.size())
             .arg(formatDuration(sp.durationSec)),
-        2000);
+        3000);
 }
 
 void MainWindow::setConnectedUi(bool connected)
