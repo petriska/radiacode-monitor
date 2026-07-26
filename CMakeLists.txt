@@ -29,6 +29,8 @@ add_executable(radiacode-monitor
   src/mainwindow.cpp
   src/spectrumwidget.h
   src/spectrumwidget.cpp
+  src/spectrumexport.h
+  src/spectrumexport.cpp
 )
 
 target_link_libraries(radiacode-monitor PRIVATE

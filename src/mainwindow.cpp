@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "spectrumexport.h"
 #include "spectrumwidget.h"
 
 #include "discovery/usbdiscovery.h"
@@ -54,7 +55,8 @@ MainWindow::MainWindow(QWidget *parent)
            "The plot auto-refreshes about every 2 seconds while connected."));
     m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
     m_saveSpectrumBtn->setToolTip(
-        tr("Save the last received spectrum (counts, live time, calibration) to a CSV file."));
+        tr("Save the last spectrum as CSV, TKA, or ANSI/IEEE N42.42.\n"
+           "Includes live time and energy calibration where the format allows."));
     m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
     m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
     m_disconnectBtn->setToolTip(tr("Close USB connection and release the device"));
@@ -223,54 +225,53 @@ void MainWindow::onSaveSpectrum()
     const QString serial = m_device->serialNumber().isEmpty()
         ? QStringLiteral("unknown")
         : m_device->serialNumber();
-    const QString defaultName = QStringLiteral("%1_spectrum_%2s_%3.csv")
-                                    .arg(serial)
-                                    .arg(m_lastSpectrum.durationSec)
-                                    .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    const QString stamp =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    const QString baseName = QStringLiteral("%1_spectrum_%2s_%3")
+                                 .arg(serial)
+                                 .arg(m_lastSpectrum.durationSec)
+                                 .arg(stamp);
 
     const QString startDir =
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    const QString path = QFileDialog::getSaveFileName(
+    QString selectedFilter;
+    QString path = QFileDialog::getSaveFileName(
         this,
         tr("Save spectrum"),
-        startDir + QLatin1Char('/') + defaultName,
-        tr("CSV files (*.csv);;All files (*)"));
+        startDir + QLatin1Char('/') + baseName + QStringLiteral(".csv"),
+        SpectrumExport::formatFilterString(),
+        &selectedFilter);
     if (path.isEmpty()) {
         return;
     }
 
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        appendLog(tr("Cannot write file: %1").arg(path));
+    const auto format = SpectrumExport::formatFromFilter(selectedFilter);
+    const QString ext = SpectrumExport::defaultExtension(format);
+    if (!path.endsWith(QLatin1Char('.') + ext, Qt::CaseInsensitive)
+        && !path.contains(QLatin1Char('.'))) {
+        path += QLatin1Char('.') + ext;
+    }
+
+    const QString err = SpectrumExport::writeSpectrumFile(
+        path,
+        format,
+        m_lastSpectrum,
+        serial,
+        m_device->firmwareVersion());
+    if (!err.isEmpty()) {
+        appendLog(tr("Save failed: %1").arg(err));
         return;
     }
 
-    QTextStream out(&f);
-    out.setRealNumberNotation(QTextStream::SmartNotation);
-    out.setRealNumberPrecision(8);
-
-    // Metadata header (comment lines — easy to skip when plotting)
-    out << "# QtRadiacode spectrum export\n";
-    out << "# saved_utc=" << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
-    out << "# device_serial=" << serial << "\n";
-    out << "# firmware=" << m_device->firmwareVersion() << "\n";
-    out << "# live_time_sec=" << m_lastSpectrum.durationSec << "\n";
-    out << "# live_time_human=" << formatDuration(m_lastSpectrum.durationSec) << "\n";
-    out << "# calib_a0=" << m_lastSpectrum.a0 << "\n";
-    out << "# calib_a1=" << m_lastSpectrum.a1 << "\n";
-    out << "# calib_a2=" << m_lastSpectrum.a2 << "\n";
-    out << "# channels=" << m_lastSpectrum.counts.size() << "\n";
-    out << "# energy_keV = a0 + a1*channel + a2*channel^2\n";
-    out << "channel,counts,energy_keV\n";
-
-    for (int i = 0; i < m_lastSpectrum.counts.size(); ++i) {
-        const double e = QtRadiacode::spectrumChannelToEnergy(
-            i, m_lastSpectrum.a0, m_lastSpectrum.a1, m_lastSpectrum.a2);
-        out << i << ',' << m_lastSpectrum.counts.at(i) << ',' << e << '\n';
+    QString fmtName = QStringLiteral("CSV");
+    if (format == SpectrumExport::Format::Tka) {
+        fmtName = QStringLiteral("TKA");
+    } else if (format == SpectrumExport::Format::N42) {
+        fmtName = QStringLiteral("N42.42");
     }
-    f.close();
 
-    appendLog(tr("Spectrum saved (%1 s live, %2 ch) → %3")
+    appendLog(tr("Spectrum saved as %1 (%2 s live, %3 ch) → %4")
+                  .arg(fmtName)
                   .arg(m_lastSpectrum.durationSec)
                   .arg(m_lastSpectrum.counts.size())
                   .arg(path));
