@@ -57,7 +57,7 @@ MainWindow::MainWindow(QWidget *parent)
            "The plot auto-refreshes about every 2 seconds while connected."));
     m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
     m_saveSpectrumBtn->setToolTip(
-        tr("Save the last spectrum as CSV, TKA, or ANSI/IEEE N42.42.\n"
+        tr("Save the last spectrum as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON.\n"
            "Includes live time and energy calibration where the format allows."));
     m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
     m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
@@ -300,6 +300,8 @@ void MainWindow::onSaveSpectrum()
         fmtName = QStringLiteral("TKA");
     } else if (format == SpectrumExport::Format::N42) {
         fmtName = QStringLiteral("N42.42");
+    } else if (format == SpectrumExport::Format::Npes) {
+        fmtName = QStringLiteral("NPES-JSON");
     }
 
     appendLog(tr("Spectrum saved as %1 (%2 s live, %3 ch) → %4")

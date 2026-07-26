@@ -4,6 +4,9 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTextStream>
 #include <QUuid>
 
@@ -188,6 +191,78 @@ bool writeN42(
     return true;
 }
 
+// OpenGammaProject NPES-JSON NPESv2:
+// https://github.com/OpenGammaProject/NPES-JSON
+bool writeNpes(
+    QFile &f,
+    const QtRadiacode::RcSpectrum &sp,
+    const QString &serial,
+    const QString &fw)
+{
+    quint64 totalCounts = 0;
+    QJsonArray spectrumArr;
+    spectrumArr.reserve(sp.counts.size());
+    for (quint32 c : sp.counts) {
+        spectrumArr.append(static_cast<qint64>(c));
+        totalCounts += c;
+    }
+
+    QJsonObject energyCalibration;
+    energyCalibration.insert(QStringLiteral("polynomialOrder"), 2);
+    QJsonArray coeffs;
+    coeffs.append(sp.a0);
+    coeffs.append(sp.a1);
+    coeffs.append(sp.a2);
+    energyCalibration.insert(QStringLiteral("coefficients"), coeffs);
+
+    QJsonObject energySpectrum;
+    energySpectrum.insert(QStringLiteral("numberOfChannels"), sp.counts.size());
+    energySpectrum.insert(QStringLiteral("spectrum"), spectrumArr);
+    energySpectrum.insert(QStringLiteral("energyCalibration"), energyCalibration);
+    // Schema requires measurementTime >= 1 when present.
+    const int measTime = sp.durationSec > 0 ? static_cast<int>(sp.durationSec) : 1;
+    energySpectrum.insert(QStringLiteral("measurementTime"), measTime);
+    if (totalCounts > 0) {
+        energySpectrum.insert(QStringLiteral("validPulseCount"),
+                              static_cast<qint64>(totalCounts));
+    }
+
+    const QDateTime end = QDateTime::currentDateTimeUtc();
+    const QDateTime start = end.addSecs(-static_cast<qint64>(sp.durationSec));
+
+    QJsonObject resultData;
+    resultData.insert(QStringLiteral("startTime"),
+                      start.toString(Qt::ISODate));
+    resultData.insert(QStringLiteral("endTime"), end.toString(Qt::ISODate));
+    resultData.insert(QStringLiteral("energySpectrum"), energySpectrum);
+
+    QJsonObject deviceData;
+    deviceData.insert(QStringLiteral("softwareName"),
+                      QStringLiteral("radiacode-monitor 0.1.0 (QtRadiacode)"));
+    if (!serial.isEmpty() && serial != QLatin1String("unknown")) {
+        deviceData.insert(QStringLiteral("deviceName"), serial);
+    }
+    // Extra metadata allowed (additionalProperties: true on deviceData).
+    if (!fw.isEmpty() && fw != QLatin1String("unknown")) {
+        deviceData.insert(QStringLiteral("firmwareVersion"), fw);
+    }
+
+    QJsonObject package;
+    package.insert(QStringLiteral("deviceData"), deviceData);
+    package.insert(QStringLiteral("resultData"), resultData);
+
+    QJsonArray dataArr;
+    dataArr.append(package);
+
+    QJsonObject root;
+    root.insert(QStringLiteral("schemaVersion"), QStringLiteral("NPESv2"));
+    root.insert(QStringLiteral("data"), dataArr);
+
+    const QByteArray json =
+        QJsonDocument(root).toJson(QJsonDocument::Indented);
+    return f.write(json) == json.size();
+}
+
 } // namespace
 
 QString formatFilterString()
@@ -196,6 +271,7 @@ QString formatFilterString()
         "CSV (*.csv);;"
         "TKA spectrum (*.tka);;"
         "ANSI N42.42 (*.n42);;"
+        "NPES-JSON (*.json);;"
         "All files (*)");
 }
 
@@ -209,6 +285,10 @@ Format formatFromFilter(const QString &selectedFilter)
         || selectedFilter.contains(QLatin1String("*.n42"), Qt::CaseInsensitive)) {
         return Format::N42;
     }
+    if (selectedFilter.contains(QLatin1String("NPES"), Qt::CaseInsensitive)
+        || selectedFilter.contains(QLatin1String("*.json"), Qt::CaseInsensitive)) {
+        return Format::Npes;
+    }
     return Format::Csv;
 }
 
@@ -219,6 +299,8 @@ QString defaultExtension(Format format)
         return QStringLiteral("tka");
     case Format::N42:
         return QStringLiteral("n42");
+    case Format::Npes:
+        return QStringLiteral("json");
     case Format::Csv:
     default:
         return QStringLiteral("csv");
@@ -232,6 +314,7 @@ QString stripKnownExtension(const QString &path)
         QStringLiteral(".csv"),
         QStringLiteral(".tka"),
         QStringLiteral(".n42"),
+        QStringLiteral(".json"),
     };
     for (const QString &e : exts) {
         if (p.endsWith(e, Qt::CaseInsensitive)) {
@@ -278,6 +361,9 @@ QString writeSpectrumFile(
         break;
     case Format::N42:
         ok = writeN42(f, spectrum, serial, fw);
+        break;
+    case Format::Npes:
+        ok = writeNpes(f, spectrum, serial, fw);
         break;
     }
     f.close();
