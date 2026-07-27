@@ -31,6 +31,36 @@ cmake --build .
 ./radiacode-monitor
 ```
 
+## Windows installer (NSIS)
+
+After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to the exe):
+
+**Requirements:** [NSIS 3.x](https://nsis.sourceforge.io/), Qt kit with `windeployqt` / `windeployqt6`.
+
+```powershell
+# From the radiacode-monitor repo root
+.\scripts\package-windows.ps1
+
+# Or with explicit paths / version:
+.\scripts\package-windows.ps1 `
+  -BuildBinDir .\build\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\bin `
+  -QtDir M:\Qt\6.11.1\msvc2022_64 `
+  -Version 0.1.0
+```
+
+This will:
+
+1. Stage files under `dist\stage\`
+2. Run **windeployqt** for Qt DLLs and plugins
+3. Build **`dist\RadiaCodeMonitor-<version>-win64.exe`** via `installer\radiacode-monitor.nsi`
+
+| Path | Role |
+|------|------|
+| `installer/radiacode-monitor.nsi` | NSIS script |
+| `installer/license.txt` | License page in the wizard |
+| `scripts/package-windows.ps1` | Stage + windeployqt + makensis |
+| `dist/` | Output (gitignored) |
+
 ## Later (GitHub)
 
 Pin the library via FetchContent or git submodule to private `qtradiacode` `v0.1.0`.

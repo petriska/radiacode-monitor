@@ -23,7 +23,8 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${QTRADIACODE_DIR}" "${CMAKE_BINARY_DIR}/qtradiacode")
 
-add_executable(radiacode-monitor
+# WIN32 = Windows GUI subsystem (no console window). Ignored on Linux/macOS.
+add_executable(radiacode-monitor WIN32
   src/main.cpp
   src/mainwindow.h
   src/mainwindow.cpp
@@ -33,10 +34,19 @@ add_executable(radiacode-monitor
   src/spectrumexport.cpp
 )
 
+set_target_properties(radiacode-monitor PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  WIN32_EXECUTABLE TRUE
+  MACOSX_BUNDLE TRUE
+)
+
 target_link_libraries(radiacode-monitor PRIVATE
   QtRadiacode::QtRadiacode
   Qt6::Core
   Qt6::Widgets
 )
+
+# Deploy QtRadiacode.dll + libusb-1.0.dll next to the .exe (Windows).
+qtradiacode_deploy_runtime(radiacode-monitor)
 
 install(TARGETS radiacode-monitor RUNTIME DESTINATION bin)
