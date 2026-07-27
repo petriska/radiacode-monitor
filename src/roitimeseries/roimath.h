@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QString>
 #include <QVector>
 #include <QtGlobal>
@@ -43,3 +44,6 @@ bool hasEnergyCalibration(float a0, float a1, float a2);
 
 // Stable id from name for CSV columns.
 QString makeRoiId(const QString &name);
+
+// Shared palette for chart series and spectrum highlighting (stable by list index).
+QColor roiSeriesColor(int index);

@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 
+// std::min used in barColorForChannel
+
 namespace {
 // Extra room: left for rotated "Counts" title; bottom for tick numbers + "Energy (keV)".
 constexpr int kMarginLeft = 64;
@@ -53,6 +55,12 @@ void SpectrumWidget::setSpectrum(const QVector<quint32> &counts, float a0, float
     } else {
         clampView();
     }
+    update();
+}
+
+void SpectrumWidget::setRoiBands(const QVector<SpectrumRoiBand> &bands)
+{
+    m_roiBands = bands;
     update();
 }
 
@@ -288,6 +296,46 @@ void SpectrumWidget::drawGridAndAxes(QPainter &p, const QRect &plot, quint32 max
     p.restore();
 }
 
+QColor SpectrumWidget::barColorForChannel(int channel, bool highlight) const
+{
+    const QColor base(70, 150, 255, 210);
+    const QColor baseHi(110, 190, 255, 230);
+
+    if (m_roiBands.isEmpty() || !hasEnergyAxis()) {
+        return highlight ? baseHi : base;
+    }
+
+    // Channel energy at center of bin for ROI membership.
+    const double e = channelToEnergy(static_cast<double>(channel) + 0.5);
+    int rSum = 0;
+    int gSum = 0;
+    int bSum = 0;
+    int nHit = 0;
+    for (const SpectrumRoiBand &band : m_roiBands) {
+        if (!band.enabled || band.eMaxKeV <= band.eMinKeV) {
+            continue;
+        }
+        if (e >= band.eMinKeV && e < band.eMaxKeV) {
+            rSum += band.color.red();
+            gSum += band.color.green();
+            bSum += band.color.blue();
+            ++nHit;
+        }
+    }
+    if (nHit == 0) {
+        return highlight ? baseHi : base;
+    }
+
+    QColor c(rSum / nHit, gSum / nHit, bSum / nHit, highlight ? 240 : 210);
+    if (highlight) {
+        // Slight lift toward white for cursor channel.
+        c = QColor(std::min(255, c.red() + 40),
+                   std::min(255, c.green() + 40),
+                   std::min(255, c.blue() + 40), 240);
+    }
+    return c;
+}
+
 void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) const
 {
     const int n = channelCount();
@@ -298,8 +346,6 @@ void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) 
     }
 
     p.setPen(Qt::NoPen);
-    const QColor bar(70, 150, 255, 210);
-    const QColor barHi(110, 190, 255, 230);
 
     for (int i = i0; i < i1; ++i) {
         const double x0 = channelToX(static_cast<double>(i), plot);
@@ -312,7 +358,7 @@ void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) 
         if (h <= 0) {
             continue;
         }
-        p.fillRect(left, plot.bottom() - h, w, h, (i == m_cursorCh) ? barHi : bar);
+        p.fillRect(left, plot.bottom() - h, w, h, barColorForChannel(i, i == m_cursorCh));
     }
 
     p.setPen(QColor(70, 72, 80));

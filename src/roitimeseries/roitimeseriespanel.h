@@ -33,6 +33,8 @@ signals:
     void requestSpectrumNow();
     void requestSpectrumReset();
     void logMessage(const QString &line);
+    /// Current ROI list (for spectrum tinting); includes disabled rows.
+    void roisChanged(const QVector<RoiWindow> &rois);
 
 private slots:
     void onStart();
@@ -50,6 +52,7 @@ private:
     void loadRoisToTable(const QVector<RoiWindow> &rois);
     QVector<RoiWindow> roisFromTable() const;
     void setEditingEnabled(bool on);
+    void emitRoisChanged();
 
     QtRadiacode::RadiaCodeDevice *m_device = nullptr;
     RoiTimeSeriesRecorder *m_recorder = nullptr;

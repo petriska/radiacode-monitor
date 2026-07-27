@@ -1,7 +1,16 @@
 #pragma once
 
+#include <QColor>
 #include <QVector>
 #include <QWidget>
+
+// Energy band used to tint spectrum bars (from ROI time series panel).
+struct SpectrumRoiBand {
+    double eMinKeV = 0;
+    double eMaxKeV = 0;
+    QColor color;
+    bool enabled = true;
+};
 
 // Interactive spectrum plot: bars with sqrt Y scale, X zoom/pan, vertical energy cursor.
 class SpectrumWidget : public QWidget {
@@ -10,6 +19,8 @@ public:
     explicit SpectrumWidget(QWidget *parent = nullptr);
 
     void setSpectrum(const QVector<quint32> &counts, float a0, float a1, float a2);
+    /// Tint channels that fall inside ROI energy windows; overlapping ROIs blend RGB.
+    void setRoiBands(const QVector<SpectrumRoiBand> &bands);
     void clear();
     void resetView();
 
@@ -42,11 +53,13 @@ private:
     void drawGridAndAxes(QPainter &p, const QRect &plot, quint32 maxC) const;
     void drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) const;
     void drawCursor(QPainter &p, const QRect &plot) const;
+    QColor barColorForChannel(int channel, bool highlight) const;
 
     QVector<quint32> m_counts;
     float m_a0 = 0;
     float m_a1 = 0;
     float m_a2 = 0;
+    QVector<SpectrumRoiBand> m_roiBands;
 
     // Visible channel range [m_xMin, m_xMax) in channel units.
     double m_xMin = 0;

@@ -13,6 +13,7 @@
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
@@ -103,6 +104,8 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     root->addWidget(m_chart, 1);
 
     loadRoisToTable(presetRadonDaughters());
+    // Defer so MainWindow can connect to roisChanged first.
+    QTimer::singleShot(0, this, [this] { emitRoisChanged(); });
 
     connect(m_startBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onStart);
     connect(m_stopBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onStop);
@@ -116,7 +119,8 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     connect(m_roiTable, &QTableWidget::itemChanged, this, &RoiTimeSeriesPanel::onTableChanged);
 
     connect(m_recorder, &RoiTimeSeriesRecorder::sampleAdded, this, [this](const RoiTimeSample &) {
-        m_chart->setSamples(m_recorder->samples(), m_recorder->hasT0(), m_recorder->t0());
+        m_chart->setSamples(m_recorder->samples(), m_recorder->hasT0(), m_recorder->t0(),
+                            m_recorder->rois());
         updateStatus();
     });
     connect(m_recorder, &RoiTimeSeriesRecorder::samplesCleared, this, [this] {
@@ -145,6 +149,12 @@ void RoiTimeSeriesPanel::loadRoisToTable(const QVector<RoiWindow> &rois)
         m_roiTable->item(row, ColName)->setData(Qt::UserRole, r.id);
     }
     m_blockTableSignal = false;
+    emitRoisChanged();
+}
+
+void RoiTimeSeriesPanel::emitRoisChanged()
+{
+    emit roisChanged(roisFromTable());
 }
 
 QVector<RoiWindow> RoiTimeSeriesPanel::roisFromTable() const
@@ -227,6 +237,7 @@ void RoiTimeSeriesPanel::onAddRoi()
     m_roiTable->setItem(row, ColEMax, new QTableWidgetItem(QStringLiteral("200")));
     m_blockTableSignal = false;
     m_roiTable->selectRow(row);
+    emitRoisChanged();
 }
 
 void RoiTimeSeriesPanel::onRemoveRoi()
@@ -237,6 +248,7 @@ void RoiTimeSeriesPanel::onRemoveRoi()
     const int row = m_roiTable->currentRow();
     if (row >= 0) {
         m_roiTable->removeRow(row);
+        emitRoisChanged();
     }
 }
 
@@ -258,6 +270,7 @@ void RoiTimeSeriesPanel::onTableChanged()
             m_blockTableSignal = false;
         }
     }
+    emitRoisChanged();
 }
 
 void RoiTimeSeriesPanel::onStart()
@@ -334,7 +347,8 @@ void RoiTimeSeriesPanel::onSetT0()
 {
     const QDateTime t0 = QDateTime::currentDateTimeUtc();
     m_recorder->setT0(t0);
-    m_chart->setSamples(m_recorder->samples(), m_recorder->hasT0(), m_recorder->t0());
+    m_chart->setSamples(m_recorder->samples(), m_recorder->hasT0(), m_recorder->t0(),
+                        m_recorder->rois());
     emit logMessage(tr("ROI time series: t₀ set to %1 (UTC).")
                         .arg(t0.toString(Qt::ISODateWithMs)));
     updateStatus();

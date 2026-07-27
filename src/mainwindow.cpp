@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "roitimeseries/roimath.h"
 #include "roitimeseries/roitimeseriespanel.h"
 #include "spectrumexport.h"
 #include "spectrumwidget.h"
@@ -122,6 +123,22 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     connect(m_roiPanel, &RoiTimeSeriesPanel::logMessage, this, &MainWindow::appendLog);
+    connect(m_roiPanel, &RoiTimeSeriesPanel::roisChanged, this,
+            [this](const QVector<RoiWindow> &rois) {
+        QVector<SpectrumRoiBand> bands;
+        bands.reserve(rois.size());
+        for (int i = 0; i < rois.size(); ++i) {
+            const RoiWindow &r = rois[i];
+            SpectrumRoiBand b;
+            b.eMinKeV = r.eMinKeV;
+            b.eMaxKeV = r.eMaxKeV;
+            b.enabled = r.enabled;
+            // Match chart palette: index 0 = gross, ROIs start at 1.
+            b.color = roiSeriesColor(i + 1);
+            bands.append(b);
+        }
+        m_spectrum->setRoiBands(bands);
+    });
     connect(m_roiPanel, &RoiTimeSeriesPanel::requestSpectrumNow, this, [this] {
         if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
             m_device->requestSpectrum();

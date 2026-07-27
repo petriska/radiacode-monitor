@@ -5,6 +5,21 @@
 #include <algorithm>
 #include <cmath>
 
+QColor roiSeriesColor(int index)
+{
+    static const QColor kColors[] = {
+        QColor(80, 180, 255),
+        QColor(255, 180, 70),
+        QColor(120, 220, 140),
+        QColor(220, 120, 200),
+        QColor(200, 200, 120),
+        QColor(255, 120, 120),
+        QColor(160, 140, 255),
+    };
+    const int n = int(sizeof(kColors) / sizeof(kColors[0]));
+    return kColors[(index % n + n) % n];
+}
+
 QVector<RoiWindow> presetRadonDaughters()
 {
     return {

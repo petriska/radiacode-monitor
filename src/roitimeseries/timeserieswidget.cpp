@@ -1,20 +1,12 @@
 #include "roitimeseries/timeserieswidget.h"
 
+#include "roitimeseries/roimath.h"
+
 #include <QPainter>
 #include <QPainterPath>
 
 #include <algorithm>
 #include <cmath>
-
-namespace {
-const QColor kColors[] = {
-    QColor(80, 180, 255),
-    QColor(255, 180, 70),
-    QColor(120, 220, 140),
-    QColor(220, 120, 200),
-    QColor(200, 200, 120),
-};
-} // namespace
 
 TimeSeriesWidget::TimeSeriesWidget(QWidget *parent)
     : QWidget(parent)
@@ -35,7 +27,7 @@ void TimeSeriesWidget::clear()
 }
 
 void TimeSeriesWidget::setSamples(const QVector<RoiTimeSample> &samples, bool hasT0,
-                                  const QDateTime &t0)
+                                  const QDateTime &t0, const QVector<RoiWindow> &roiOrder)
 {
     Q_UNUSED(t0);
     m_series.clear();
@@ -60,13 +52,23 @@ void TimeSeriesWidget::setSamples(const QVector<RoiTimeSample> &samples, bool ha
     }
     ids.prepend(QStringLiteral("gross"));
 
-    int colorIdx = 0;
+    auto colorForId = [&](const QString &id) -> QColor {
+        if (id == QStringLiteral("gross")) {
+            return roiSeriesColor(0);
+        }
+        for (int i = 0; i < roiOrder.size(); ++i) {
+            if (roiOrder[i].id == id) {
+                return roiSeriesColor(i + 1);
+            }
+        }
+        return roiSeriesColor(1);
+    };
+
     for (const QString &id : ids) {
         Series ser;
         ser.id = id;
         ser.label = (id == QStringLiteral("gross")) ? QStringLiteral("gross") : id;
-        ser.color = kColors[colorIdx % 5];
-        ++colorIdx;
+        ser.color = colorForId(id);
         m_series.append(ser);
     }
 

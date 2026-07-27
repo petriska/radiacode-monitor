@@ -12,7 +12,8 @@ class TimeSeriesWidget : public QWidget {
 public:
     explicit TimeSeriesWidget(QWidget *parent = nullptr);
 
-    void setSamples(const QVector<RoiTimeSample> &samples, bool hasT0, const QDateTime &t0);
+    void setSamples(const QVector<RoiTimeSample> &samples, bool hasT0, const QDateTime &t0,
+                    const QVector<RoiWindow> &roiOrder = {});
     void clear();
 
 protected:
