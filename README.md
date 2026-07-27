@@ -66,9 +66,28 @@ This will:
 | `scripts/package-windows.ps1` | Stage + windeployqt + makensis |
 | `dist/` | Output (gitignored) |
 
-## Later (GitHub)
+## GitHub / library pin
 
-Pin the library via FetchContent or git submodule to private `qtradiacode` `v0.1.0`.
+Private repos:
+
+- App: https://github.com/petriska/radiacode-monitor
+- Library: https://github.com/petriska/qtradiacode (**`v0.1.1`**)
+
+Local development uses a **sibling** checkout (`../qtradiacode`). For a pinned clone:
+
+```bash
+git clone git@github.com:petriska/qtradiacode.git
+cd qtradiacode && git checkout v0.1.1
+```
+
+Or CMake FetchContent:
+
+```cmake
+FetchContent_Declare(qtradiacode
+  GIT_REPOSITORY git@github.com:petriska/qtradiacode.git
+  GIT_TAG        v0.1.1
+)
+```
 
 ## ROI time series
 
@@ -89,10 +108,14 @@ Universal spectrum multiscaling: define energy ROIs, sample on a dwell interval,
 
 Rates are **incremental** ROI counts per second of **device live time** between successive spectra when live time increases; after a reset the first sample uses \(N/T_\mathrm{live}\).
 
+## Spectrum export
+
+Save spectrum as **CSV**, **TKA**, **ANSI N42.42**, or [**NPES-JSON**](https://github.com/OpenGammaProject/NPES-JSON) (NPESv2).
+
 ## Features (later)
 
-- In-app T½ fit, ROI bands on spectrum, background ROI
-- Save spectrum: CSV, TKA, ANSI N42.42, [NPES-JSON](https://github.com/OpenGammaProject/NPES-JSON) (already supported)
+- In-app T½ fit, background ROI
+- Linux AppImage / deb packaging
 
 ## Notes
 

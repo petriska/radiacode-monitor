@@ -1,7 +1,9 @@
 build/
+build-*/
 dist/
 .cmake/
 CMakeCache.txt
 CMakeFiles/
+CMakeLists.txt.user
 
 .qtcreator/
