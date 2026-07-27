@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Device list includes **BLE** scan results alongside USB; Connect uses `connectBle` / `connectUsb`
+- UI group renamed to **Device** (was “USB device”)
+
+### Fixed
+
+- BLE: one command per second + spectrum gating (no queue full spam)
+- BLE ROI: dwell uses wall-clock time (was inflated to ~3× by round-robin)
+
+### Changed
+
+- ROI controls (preset, table, record) moved next to **Live** (always visible); ROI tab shows chart only
+
+### Added
+
+- Live: **Battery** (% from Rare DATA_BUF) and **BLE signal** (RSSI dBm; n/a on USB)
+- Periodic DATA_BUF poll for Rare/battery (~1 min + shortly after connect)
+- ROI preset **Ag neutron activation** (¹⁰⁸Ag 633 keV, ¹¹⁰Ag 658 keV; optional ¹¹⁰ᵐAg 885/937 keV)
+- QSettings: remember last ROI **preset**, **dwell**, and **Reset spectrum on start**
+
 ## [0.1.0] — 2026-07-27
 
 ### Added

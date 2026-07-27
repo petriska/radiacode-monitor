@@ -29,12 +29,46 @@ QVector<RoiWindow> presetRadonDaughters()
     };
 }
 
+QVector<RoiWindow> presetSilverNeutronActivation()
+{
+    // Natural Ag: 107Ag (~52%) → 108Ag (t½ ≈ 2.37 min), main γ ≈ 633.0 keV
+    //             109Ag (~48%) → 110Ag (t½ ≈ 24.6 s),  main γ ≈ 657.8 keV
+    // Windows ~±15 keV; peaks are close — on CsI they may partially overlap.
+    // Longer-lived 110mAg also feeds 658 keV (and higher lines); optional ROIs below.
+    return {
+        {QStringLiteral("ag108_633"),
+         QStringLiteral("108Ag 633 keV"),
+         618.0,
+         648.0,
+         true},
+        {QStringLiteral("ag110_658"),
+         QStringLiteral("110Ag 658 keV"),
+         643.0,
+         673.0,
+         true},
+        // Useful after longer irradiation / for 110mAg (t½ ≈ 250 d)
+        {QStringLiteral("ag110m_885"),
+         QStringLiteral("110mAg 885 keV"),
+         865.0,
+         905.0,
+         false},
+        {QStringLiteral("ag110m_937"),
+         QStringLiteral("110mAg 937 keV"),
+         915.0,
+         960.0,
+         false},
+    };
+}
+
 QVector<RoiPreset> roiPresets()
 {
     return {
         {QStringLiteral("radon_daughters"),
          QStringLiteral("Radon daughters (214Pb / 214Bi)"),
          presetRadonDaughters()},
+        {QStringLiteral("ag_neutron_activation"),
+         QStringLiteral("Ag neutron activation (108Ag / 110Ag)"),
+         presetSilverNeutronActivation()},
         {QStringLiteral("empty"), QStringLiteral("Empty (custom ROIs)"), {}},
     };
 }

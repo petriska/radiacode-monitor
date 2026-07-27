@@ -12,6 +12,8 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -25,49 +27,49 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     , m_device(device)
 {
     m_recorder = new RoiTimeSeriesRecorder(this);
-    m_recorder->setRois(presetRadonDaughters());
 
-    auto *root = new QVBoxLayout(this);
-
-    auto *ctrl = new QGroupBox(tr("ROI time series"), this);
-    auto *ctrlLay = new QVBoxLayout(ctrl);
+    // Controls live in MainWindow top row (next to Live); this panel is chart-only.
+    m_controlsBox = new QGroupBox(tr("ROI time series"), this);
+    auto *ctrlLay = new QVBoxLayout(m_controlsBox);
+    ctrlLay->setContentsMargins(8, 8, 8, 8);
 
     auto *rowPreset = new QHBoxLayout;
-    rowPreset->addWidget(new QLabel(tr("Preset:"), this));
-    m_presetCombo = new QComboBox(this);
+    rowPreset->addWidget(new QLabel(tr("Preset:"), m_controlsBox));
+    m_presetCombo = new QComboBox(m_controlsBox);
     for (const RoiPreset &p : roiPresets()) {
         m_presetCombo->addItem(p.name, p.id);
     }
     rowPreset->addWidget(m_presetCombo, 1);
     ctrlLay->addLayout(rowPreset);
 
-    m_roiTable = new QTableWidget(0, ColCount, this);
+    m_roiTable = new QTableWidget(0, ColCount, m_controlsBox);
     m_roiTable->setHorizontalHeaderLabels(
         {tr("On"), tr("Name"), tr("E min (keV)"), tr("E max (keV)")});
     m_roiTable->horizontalHeader()->setStretchLastSection(true);
     m_roiTable->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
     m_roiTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_roiTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_roiTable->setMaximumHeight(140);
-    ctrlLay->addWidget(m_roiTable);
+    m_roiTable->setMinimumHeight(100);
+    m_roiTable->setMaximumHeight(160);
+    ctrlLay->addWidget(m_roiTable, 1);
 
     auto *rowRoiBtn = new QHBoxLayout;
-    m_addRoiBtn = new QPushButton(tr("Add ROI"), this);
-    m_removeRoiBtn = new QPushButton(tr("Remove"), this);
+    m_addRoiBtn = new QPushButton(tr("Add ROI"), m_controlsBox);
+    m_removeRoiBtn = new QPushButton(tr("Remove"), m_controlsBox);
     rowRoiBtn->addWidget(m_addRoiBtn);
     rowRoiBtn->addWidget(m_removeRoiBtn);
     rowRoiBtn->addStretch(1);
     ctrlLay->addLayout(rowRoiBtn);
 
     auto *row1 = new QHBoxLayout;
-    m_startBtn = new QPushButton(tr("Start recording"), this);
-    m_stopBtn = new QPushButton(tr("Stop"), this);
-    m_clearBtn = new QPushButton(tr("Clear"), this);
-    m_t0Btn = new QPushButton(tr("Set t₀ marker"), this);
+    m_startBtn = new QPushButton(tr("Start recording"), m_controlsBox);
+    m_stopBtn = new QPushButton(tr("Stop"), m_controlsBox);
+    m_clearBtn = new QPushButton(tr("Clear"), m_controlsBox);
+    m_t0Btn = new QPushButton(tr("Set t₀ marker"), m_controlsBox);
     m_t0Btn->setToolTip(
         tr("Mark experiment start: radon flush, end of irradiation, etc.\n"
            "CSV elapsed_s is measured from this time."));
-    m_exportBtn = new QPushButton(tr("Export CSV…"), this);
+    m_exportBtn = new QPushButton(tr("Export CSV…"), m_controlsBox);
     m_stopBtn->setEnabled(false);
     row1->addWidget(m_startBtn);
     row1->addWidget(m_stopBtn);
@@ -78,34 +80,31 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     ctrlLay->addLayout(row1);
 
     auto *row2 = new QHBoxLayout;
-    m_resetOnStart = new QCheckBox(tr("Reset spectrum on start"), this);
+    m_resetOnStart = new QCheckBox(tr("Reset spectrum on start"), m_controlsBox);
     m_resetOnStart->setChecked(true);
     m_resetOnStart->setToolTip(
         tr("Clears device spectrum accumulation when recording starts "
            "(recommended for clean live times)."));
-    m_dwellCombo = new QComboBox(this);
+    m_dwellCombo = new QComboBox(m_controlsBox);
     for (int s : {5, 10, 15, 20, 30, 60}) {
         m_dwellCombo->addItem(tr("%1 s").arg(s), s);
     }
     m_dwellCombo->setCurrentIndex(2);
     row2->addWidget(m_resetOnStart);
-    row2->addWidget(new QLabel(tr("Dwell:"), this));
+    row2->addWidget(new QLabel(tr("Dwell:"), m_controlsBox));
     row2->addWidget(m_dwellCombo);
     row2->addStretch(1);
     ctrlLay->addLayout(row2);
 
-    m_statusLabel = new QLabel(this);
+    m_statusLabel = new QLabel(m_controlsBox);
     m_statusLabel->setWordWrap(true);
     ctrlLay->addWidget(m_statusLabel);
 
-    root->addWidget(ctrl);
-
+    // Tab body: chart only (controls reparented by MainWindow).
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
     m_chart = new TimeSeriesWidget(this);
     root->addWidget(m_chart, 1);
-
-    loadRoisToTable(presetRadonDaughters());
-    // Defer so MainWindow can connect to roisChanged first.
-    QTimer::singleShot(0, this, [this] { emitRoisChanged(); });
 
     connect(m_startBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onStart);
     connect(m_stopBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onStop);
@@ -117,6 +116,9 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     connect(m_presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &RoiTimeSeriesPanel::onPresetChanged);
     connect(m_roiTable, &QTableWidget::itemChanged, this, &RoiTimeSeriesPanel::onTableChanged);
+    connect(m_dwellCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { saveSettings(); });
+    connect(m_resetOnStart, &QCheckBox::toggled, this, [this](bool) { saveSettings(); });
 
     connect(m_recorder, &RoiTimeSeriesRecorder::sampleAdded, this, [this](const RoiTimeSample &) {
         m_chart->setSamples(m_recorder->samples(), m_recorder->hasT0(), m_recorder->t0(),
@@ -128,7 +130,64 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
         updateStatus();
     });
 
+    loadSettings();
+    m_recorder->setRois(roisFromTable());
+    // Defer so MainWindow can connect to roisChanged first.
+    QTimer::singleShot(0, this, [this] { emitRoisChanged(); });
+
     updateStatus();
+}
+
+void RoiTimeSeriesPanel::loadSettings()
+{
+    QSettings settings;
+    const QString presetId = settings
+                                 .value(QStringLiteral("roiTimeSeries/presetId"),
+                                        QStringLiteral("radon_daughters"))
+                                 .toString();
+    const int dwellSec =
+        settings.value(QStringLiteral("roiTimeSeries/dwellSeconds"), 15).toInt();
+    const bool resetOnStart =
+        settings.value(QStringLiteral("roiTimeSeries/resetSpectrumOnStart"), true).toBool();
+
+    {
+        QSignalBlocker blockPreset(m_presetCombo);
+        int idx = m_presetCombo->findData(presetId);
+        if (idx < 0) {
+            idx = 0;
+        }
+        m_presetCombo->setCurrentIndex(idx);
+    }
+
+    {
+        QSignalBlocker blockDwell(m_dwellCombo);
+        int dwellIdx = m_dwellCombo->findData(dwellSec);
+        if (dwellIdx < 0) {
+            dwellIdx = m_dwellCombo->findData(15);
+        }
+        if (dwellIdx < 0) {
+            dwellIdx = 0;
+        }
+        m_dwellCombo->setCurrentIndex(dwellIdx);
+    }
+
+    {
+        QSignalBlocker blockReset(m_resetOnStart);
+        m_resetOnStart->setChecked(resetOnStart);
+    }
+
+    const QString id = m_presetCombo->currentData().toString();
+    loadRoisToTable(presetById(id).rois);
+}
+
+void RoiTimeSeriesPanel::saveSettings() const
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("roiTimeSeries/presetId"),
+                      m_presetCombo->currentData().toString());
+    settings.setValue(QStringLiteral("roiTimeSeries/dwellSeconds"), dwellSeconds());
+    settings.setValue(QStringLiteral("roiTimeSeries/resetSpectrumOnStart"),
+                      m_resetOnStart->isChecked());
 }
 
 void RoiTimeSeriesPanel::loadRoisToTable(const QVector<RoiWindow> &rois)
@@ -215,6 +274,8 @@ void RoiTimeSeriesPanel::onPresetChanged(int index)
     const QString id = m_presetCombo->itemData(index).toString();
     const RoiPreset p = presetById(id);
     loadRoisToTable(p.rois);
+    m_recorder->setRois(roisFromTable());
+    saveSettings();
     emit logMessage(tr("ROI preset loaded: %1").arg(p.name));
 }
 

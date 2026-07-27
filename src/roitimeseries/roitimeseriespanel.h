@@ -5,6 +5,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
@@ -24,6 +25,9 @@ public:
     bool isRecording() const { return m_recording; }
     void onSpectrum(const QtRadiacode::RcSpectrum &sp);
     int dwellSeconds() const;
+
+    /// Preset / table / record controls — place next to Live (not inside the chart tab).
+    QWidget *controlsWidget() const { return m_controlsBox; }
 
 public slots:
     void setConnected(bool connected);
@@ -53,10 +57,13 @@ private:
     QVector<RoiWindow> roisFromTable() const;
     void setEditingEnabled(bool on);
     void emitRoisChanged();
+    void loadSettings();
+    void saveSettings() const;
 
     QtRadiacode::RadiaCodeDevice *m_device = nullptr;
     RoiTimeSeriesRecorder *m_recorder = nullptr;
     TimeSeriesWidget *m_chart = nullptr;
+    QGroupBox *m_controlsBox = nullptr;
 
     QComboBox *m_presetCombo = nullptr;
     QTableWidget *m_roiTable = nullptr;

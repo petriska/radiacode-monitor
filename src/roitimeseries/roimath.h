@@ -26,10 +26,12 @@ struct RoiPreset {
     QVector<RoiWindow> rois;
 };
 
-// Built-in presets (radon daughters, empty custom, …).
+// Built-in presets (radon daughters, Ag neutron activation, empty custom, …).
 QVector<RoiPreset> roiPresets();
 RoiPreset presetById(const QString &id);
 QVector<RoiWindow> presetRadonDaughters();
+// Thermal (n,γ) products of natural Ag: 108Ag (from 107Ag) and 110Ag (from 109Ag).
+QVector<RoiWindow> presetSilverNeutronActivation();
 
 // E(ch) = a0 + a1*ch + a2*ch^2 — find channel whose energy is closest to keV in [0, n).
 int energyToChannel(double keV, float a0, float a1, float a2, int nChannels);

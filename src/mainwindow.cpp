@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QSettings>
+#include <QSizePolicy>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTextStream>
@@ -27,7 +28,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("Radiacode Monitor"));
-    resize(900, 600);
+    resize(1100, 700);
 
     m_device = new QtRadiacode::RadiaCodeDevice(this);
 
@@ -43,15 +44,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_pollTimer->setInterval(1000);
     connect(m_pollTimer, &QTimer::timeout, this, &MainWindow::pollData);
 
+    m_slowStatusTimer = new QTimer(this);
+    m_slowStatusTimer->setInterval(kSlowStatusIntervalMs);
+    connect(m_slowStatusTimer, &QTimer::timeout, this, &MainWindow::onSlowStatusTick);
+
     auto *central = new QWidget(this);
     setCentralWidget(central);
     auto *root = new QVBoxLayout(central);
 
     // Connection bar
-    auto *connBox = new QGroupBox(tr("USB device"), this);
+    auto *connBox = new QGroupBox(tr("Device"), this);
     auto *connLay = new QHBoxLayout(connBox);
     m_deviceCombo = new QComboBox(this);
-    m_deviceCombo->setMinimumWidth(280);
+    m_deviceCombo->setMinimumWidth(320);
     m_refreshBtn = new QPushButton(tr("Refresh"), this);
     m_connectBtn = new QPushButton(tr("Connect"), this);
     m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
@@ -63,9 +68,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_saveSpectrumBtn->setToolTip(
         tr("Save the last spectrum as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON.\n"
            "Includes live time and energy calibration where the format allows."));
-    m_refreshBtn->setToolTip(tr("Re-scan USB for Radiacode devices"));
-    m_connectBtn->setToolTip(tr("Open USB connection to the selected device"));
-    m_disconnectBtn->setToolTip(tr("Close USB connection and release the device"));
+    m_refreshBtn->setToolTip(
+        tr("Re-scan USB and BLE for Radiacode devices.\n"
+           "BLE: device must be free (not held by phone or Home Assistant)."));
+    m_connectBtn->setToolTip(tr("Connect via USB or BLE to the selected device"));
+    m_disconnectBtn->setToolTip(tr("Close connection and release the device"));
     connLay->addWidget(m_deviceCombo, 1);
     connLay->addWidget(m_refreshBtn);
     connLay->addWidget(m_connectBtn);
@@ -74,7 +81,8 @@ MainWindow::MainWindow(QWidget *parent)
     connLay->addWidget(m_saveSpectrumBtn);
     root->addWidget(connBox);
 
-    // Live values
+    // Live (left) + ROI controls (right) — visible on Spectrum and ROI tabs.
+    auto *topRow = new QHBoxLayout;
     auto *liveBox = new QGroupBox(tr("Live"), this);
     auto *form = new QFormLayout(liveBox);
     m_statusLabel = new QLabel(tr("Disconnected"), this);
@@ -86,20 +94,40 @@ MainWindow::MainWindow(QWidget *parent)
     m_spectrumLiveLabel = new QLabel(QStringLiteral("—"), this);
     m_spectrumLiveLabel->setToolTip(
         tr("Live time of the spectrum currently shown (device accumulation clock)."));
+    m_batteryLabel = new QLabel(QStringLiteral("—"), this);
+    m_batteryLabel->setToolTip(
+        tr("Battery %% from Rare DATA_BUF (device status record).\n"
+           "Not a separate request — the device inserts Rare records into the "
+           "measurement stream periodically; we poll DATA_BUF about once a minute."));
+    m_signalLabel = new QLabel(QStringLiteral("—"), this);
+    m_signalLabel->setToolTip(
+        tr("BLE link strength (RSSI). USB shows n/a.\n"
+           "Updated from scan and about once per minute while connected (if the stack supports it)."));
     form->addRow(tr("Status"), m_statusLabel);
     form->addRow(tr("Serial"), m_serialLabel);
     form->addRow(tr("Firmware"), m_fwLabel);
     form->addRow(tr("Dose rate (protocol units)"), m_doseLabel);
     form->addRow(tr("Count rate (CPS)"), m_countLabel);
     form->addRow(tr("Temperature"), m_tempLabel);
+    form->addRow(tr("Battery"), m_batteryLabel);
+    form->addRow(tr("BLE signal"), m_signalLabel);
     form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
-    root->addWidget(liveBox);
+    liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    topRow->addWidget(liveBox, 2);
+
+    m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
+    if (QWidget *roiCtrl = m_roiPanel->controlsWidget()) {
+        roiCtrl->setMinimumWidth(360);
+        roiCtrl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+        // Reparent into the top row (still owned logically by the panel).
+        topRow->addWidget(roiCtrl, 3);
+    }
+    root->addLayout(topRow);
 
     auto *tabs = new QTabWidget(this);
     m_spectrum = new SpectrumWidget(this);
     tabs->addTab(m_spectrum, tr("Spectrum"));
-
-    m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
+    // ROI tab: chart only (controls are above, next to Live).
     tabs->addTab(m_roiPanel, tr("ROI time series"));
     root->addWidget(tabs, 1);
 
@@ -185,7 +213,9 @@ MainWindow::MainWindow(QWidget *parent)
     msgLay->addWidget(m_logLabel);
     root->addWidget(msgBox);
 
-    statusBar()->showMessage(tr("Ready — pick a USB device and Connect."));
+    statusBar()->showMessage(tr("Ready — pick a device and Connect."));
+
+    m_bleScanner = new QtRadiacode::RcBleScanner(this);
 
     connect(m_refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshDeviceList);
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
@@ -202,6 +232,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_device, &QtRadiacode::RadiaCodeDevice::temperatureReady, this, [this](float c) {
         m_tempLabel->setText(QStringLiteral("%1 °C").arg(c, 0, 'f', 1));
     });
+    connect(m_device, &QtRadiacode::RadiaCodeDevice::bleRssiReady, this, [this](int rssiDbm) {
+        updateSignalLabel(rssiDbm, false);
+    });
 
     setConnectedUi(false);
     refreshDeviceList();
@@ -210,40 +243,208 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     m_pollTimer->stop();
+    stopBleScan();
     if (m_device && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Disconnected) {
         m_device->disconnectFromDevice();
     }
 }
 
-void MainWindow::refreshDeviceList()
+int MainWindow::findDeviceRow(const QString &transport, const QString &id) const
 {
-    const QString prev = m_deviceCombo->currentData().toString();
+    for (int i = 0; i < m_deviceCombo->count(); ++i) {
+        if (m_deviceCombo->itemData(i, RoleTransport).toString() == transport
+            && m_deviceCombo->itemData(i, RoleId).toString() == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void MainWindow::removeEmptyPlaceholder()
+{
+    for (int i = m_deviceCombo->count() - 1; i >= 0; --i) {
+        if (m_deviceCombo->itemData(i, RoleTransport).toString().isEmpty()) {
+            m_deviceCombo->removeItem(i);
+        }
+    }
+}
+
+void MainWindow::ensureEmptyPlaceholder()
+{
+    for (int i = 0; i < m_deviceCombo->count(); ++i) {
+        if (!m_deviceCombo->itemData(i, RoleTransport).toString().isEmpty()) {
+            return;
+        }
+    }
     m_deviceCombo->clear();
+    m_deviceCombo->addItem(
+        tr("(no devices — check USB/udev, BLE on, not held by phone/HA)"),
+        QVariant());
+    m_deviceCombo->setItemData(0, QString(), RoleTransport);
+    m_deviceCombo->setItemData(0, QString(), RoleId);
+}
+
+void MainWindow::updateRefreshButton()
+{
+    using S = QtRadiacode::RadiaCodeDevice::State;
+    const bool connected =
+        m_device
+        && (m_device->state() == S::Connected || m_device->state() == S::Connecting
+            || m_device->state() == S::Disconnecting);
+
+    if (m_bleScanActive) {
+        m_refreshBtn->setText(tr("Scanning…"));
+        m_refreshBtn->setEnabled(false);
+    } else {
+        m_refreshBtn->setText(tr("Refresh"));
+        m_refreshBtn->setEnabled(!connected);
+    }
+}
+
+int MainWindow::addUsbDevicesToCombo()
+{
     const auto devices = QtRadiacode::listUsbDevices();
     for (const auto &d : devices) {
         const QString label = d.serialNumber.isEmpty()
-            ? d.product
-            : QStringLiteral("%1  (%2)").arg(d.serialNumber, d.product);
-        m_deviceCombo->addItem(label, d.serialNumber);
+            ? tr("[USB] %1").arg(d.product.isEmpty() ? tr("(unknown)") : d.product)
+            : tr("[USB] %1  (%2)")
+                  .arg(d.serialNumber, d.product.isEmpty() ? tr("Radiacode") : d.product);
+        m_deviceCombo->addItem(label);
+        const int row = m_deviceCombo->count() - 1;
+        m_deviceCombo->setItemData(row, QStringLiteral("usb"), RoleTransport);
+        m_deviceCombo->setItemData(row, d.serialNumber, RoleId);
     }
-    if (devices.isEmpty()) {
-        m_deviceCombo->addItem(tr("(no openable USB Radiacode — check udev)"), QString());
+    return devices.size();
+}
+
+void MainWindow::stopBleScan()
+{
+    if (!m_bleScanner) {
+        m_bleScanActive = false;
+        return;
     }
-    const int idx = m_deviceCombo->findData(prev);
+    // Avoid finished() re-entering UI while we rebuild the list.
+    disconnect(m_bleScanner, nullptr, this, nullptr);
+    m_bleScanner->stop();
+    m_bleScanActive = false;
+}
+
+void MainWindow::startBleScan()
+{
+    using S = QtRadiacode::RadiaCodeDevice::State;
+    if (m_device && m_device->state() != S::Disconnected && m_device->state() != S::Error) {
+        return;
+    }
+
+    stopBleScan();
+    if (!m_bleScanner) {
+        m_bleScanner = new QtRadiacode::RcBleScanner(this);
+    }
+
+    connect(m_bleScanner, &QtRadiacode::RcBleScanner::deviceFound, this,
+            &MainWindow::onBleDeviceFound);
+    connect(m_bleScanner, &QtRadiacode::RcBleScanner::finished, this,
+            &MainWindow::onBleScanFinished);
+
+    m_bleScanActive = true;
+    m_bleFoundThisScan = 0;
+    updateRefreshButton();
+    appendLog(tr("BLE scan started (10 s)…"));
+    m_bleScanner->start(10000);
+}
+
+void MainWindow::onBleDeviceFound(const QtRadiacode::RcBleDeviceInfo &info)
+{
+    if (info.address.isEmpty()) {
+        return;
+    }
+    if (findDeviceRow(QStringLiteral("ble"), info.address) >= 0) {
+        return;
+    }
+
+    removeEmptyPlaceholder();
+    QString label = tr("[BLE] %1  %2").arg(info.name, info.address);
+    if (info.hasRssi) {
+        label += tr("  %1 dBm").arg(info.rssiDbm);
+    }
+    m_deviceCombo->addItem(label);
+    const int row = m_deviceCombo->count() - 1;
+    m_deviceCombo->setItemData(row, QStringLiteral("ble"), RoleTransport);
+    m_deviceCombo->setItemData(row, info.address, RoleId);
+    m_deviceCombo->setItemData(row, info.rssiDbm, RoleRssi);
+    m_deviceCombo->setItemData(row, info.hasRssi, RoleHasRssi);
+    ++m_bleFoundThisScan;
+}
+
+void MainWindow::onBleScanFinished()
+{
+    m_bleScanActive = false;
+    ensureEmptyPlaceholder();
+    updateRefreshButton();
+    appendLog(tr("BLE scan finished: %1 device(s)").arg(m_bleFoundThisScan));
+}
+
+void MainWindow::refreshDeviceList()
+{
+    using S = QtRadiacode::RadiaCodeDevice::State;
+    if (m_device
+        && (m_device->state() == S::Connected || m_device->state() == S::Connecting
+            || m_device->state() == S::Disconnecting)) {
+        return;
+    }
+
+    const QString prevTransport = m_deviceCombo->currentData(RoleTransport).toString();
+    const QString prevId = m_deviceCombo->currentData(RoleId).toString();
+
+    stopBleScan();
+    m_deviceCombo->clear();
+
+    const int usbCount = addUsbDevicesToCombo();
+    if (usbCount == 0) {
+        // Placeholder until BLE results arrive (or scan ends empty).
+        ensureEmptyPlaceholder();
+    }
+
+    const int idx = findDeviceRow(prevTransport, prevId);
     if (idx >= 0) {
         m_deviceCombo->setCurrentIndex(idx);
     }
-    appendLog(tr("USB list: %1 device(s)").arg(devices.size()));
+
+    appendLog(tr("USB list: %1 device(s) — scanning BLE…").arg(usbCount));
+    startBleScan();
 }
 
 void MainWindow::onConnectClicked()
 {
-    const QString serial = m_deviceCombo->currentData().toString();
-    appendLog(tr("Connecting USB %1…").arg(serial.isEmpty() ? tr("(first)") : serial));
+    const QString transport = m_deviceCombo->currentData(RoleTransport).toString();
+    const QString id = m_deviceCombo->currentData(RoleId).toString();
+
+    if (transport.isEmpty()) {
+        appendLog(tr("No device selected — Refresh and pick USB or BLE."));
+        return;
+    }
+
+    // Stop BLE scan so it does not fight the adapter during connect.
+    stopBleScan();
+    updateRefreshButton();
+
     m_connectBtn->setEnabled(false);
     m_refreshBtn->setEnabled(false);
     m_deviceCombo->setEnabled(false);
-    m_device->connectUsb(serial);
+
+    if (transport == QLatin1String("ble")) {
+        if (id.isEmpty()) {
+            appendLog(tr("BLE device has no address."));
+            setConnectedUi(false);
+            return;
+        }
+        appendLog(tr("Connecting BLE %1…").arg(id));
+        m_device->connectBle(id);
+        return;
+    }
+
+    appendLog(tr("Connecting USB %1…").arg(id.isEmpty() ? tr("(first)") : id));
+    m_device->connectUsb(id);
 }
 
 void MainWindow::onDisconnectClicked()
@@ -266,11 +467,12 @@ void MainWindow::onResetSpectrum()
     m_lastSpectrum = {};
     m_spectrumLiveLabel->setText(QStringLiteral("—"));
     m_saveSpectrumBtn->setEnabled(false);
+    m_spectrumInflight = false;
     m_device->spectrumReset();
     // Next auto-poll will reload; also request once after a short delay.
-    QTimer::singleShot(300, this, [this] {
+    QTimer::singleShot(isBleConnection() ? 800 : 300, this, [this] {
         if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
-            m_device->requestSpectrum();
+            requestSpectrumGated();
         }
     });
 }
@@ -410,25 +612,162 @@ void MainWindow::onSaveSpectrum()
                   .arg(path));
 }
 
+bool MainWindow::isBleConnection() const
+{
+    return m_device
+        && m_device->connectionType() == QtRadiacode::RadiaCodeDevice::ConnectionType::Ble;
+}
+
+void MainWindow::requestSpectrumGated()
+{
+    if (m_spectrumInflight) {
+        return;
+    }
+    m_spectrumInflight = true;
+    m_device->requestSpectrum();
+}
+
+void MainWindow::configurePollForConnection()
+{
+    m_pollTimer->setInterval(isBleConnection() ? kPollIntervalBleMs : kPollIntervalUsbMs);
+}
+
+void MainWindow::updateSignalLabel(int rssiDbm, bool fromScan)
+{
+    if (!isBleConnection()
+        && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connecting) {
+        m_signalLabel->setText(tr("n/a (USB)"));
+        return;
+    }
+    const QString suffix = fromScan ? tr(" (scan)") : QString();
+    m_signalLabel->setText(tr("%1 dBm%2").arg(rssiDbm).arg(suffix));
+}
+
+void MainWindow::startSlowStatusTimer()
+{
+    if (!m_slowStatusTimer) {
+        return;
+    }
+    m_slowStatusTimer->start();
+    // Soon after connect: pull DATA_BUF (may already contain Rare) + BLE RSSI.
+    // Rare is not on-demand — only appears when the device has emitted a status record.
+    QTimer::singleShot(1500, this, [this] {
+        if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected
+            && !m_spectrumInflight) {
+            m_device->requestDataBuf();
+            if (isBleConnection()) {
+                m_device->requestBleRssi();
+            }
+        }
+    });
+    // Second pull a bit later — Rare is often slower than RealTime.
+    QTimer::singleShot(8000, this, [this] {
+        if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected
+            && !m_spectrumInflight) {
+            m_device->requestDataBuf();
+        }
+    });
+}
+
+void MainWindow::stopSlowStatusTimer()
+{
+    if (m_slowStatusTimer) {
+        m_slowStatusTimer->stop();
+    }
+}
+
+void MainWindow::onSlowStatusTick()
+{
+    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+        return;
+    }
+    if (m_spectrumInflight) {
+        return;
+    }
+    // Battery lives only in Rare DATA_BUF records (no dedicated VSFR). Poll the
+    // stream so Rare is drained even when live poll is busy with spectrum/ROI.
+    m_device->requestDataBuf();
+    // BLE RSSI: best-effort on Qt 6.5+; no-op / silent on older stacks.
+    if (isBleConnection()) {
+        m_device->requestBleRssi();
+    }
+}
+
+bool MainWindow::spectrumDwellDueMs(int dwellSeconds) const
+{
+    const qint64 dwellMs = qMax(1, dwellSeconds) * 1000LL;
+    if (!m_haveSpectrumSample) {
+        return true;
+    }
+    return m_sinceSpectrumSample.elapsed() >= dwellMs;
+}
+
 void MainWindow::pollData()
 {
     if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
         return;
     }
-    // Every 1 s: dose/count (+ temperature).
+
+    const bool ble = isBleConnection();
+    const bool recording = m_roiPanel && m_roiPanel->isRecording();
+    ++m_pollTick;
+
+    if (ble) {
+        // At most one command per 1 s tick so the queue never fills.
+        // While a spectrum is in flight, wait (BLE spectrum can take many seconds).
+        if (m_spectrumInflight) {
+            return;
+        }
+
+        if (recording) {
+            // Honor dwell in wall-clock time (not round-robin slots).
+            const int dwell = qMax(1, m_roiPanel->dwellSeconds());
+            if (spectrumDwellDueMs(dwell)) {
+                requestSpectrumGated();
+                return;
+            }
+            // Between samples: light live update, never stacked with spectrum.
+            if (m_pollTick % 3 == 0) {
+                m_device->requestTemperature();
+            } else {
+                m_device->requestDataBuf();
+            }
+            return;
+        }
+
+        // Live view (not recording): sparse round-robin.
+        switch (m_pollTick % 6) {
+        case 0:
+        case 3:
+            m_device->requestDataBuf();
+            break;
+        case 1:
+        case 4:
+            m_device->requestTemperature();
+            break;
+        default:
+            // Spectrum about every 3 s when free (still gated).
+            if (spectrumDwellDueMs(3)) {
+                requestSpectrumGated();
+            } else {
+                m_device->requestDataBuf();
+            }
+            break;
+        }
+        return;
+    }
+
+    // USB: every 1 s dose/count (+ temperature); spectrum ~2 s or ROI dwell.
     m_device->requestDataBuf();
     m_device->requestTemperature();
 
-    ++m_pollTick;
-    if (m_roiPanel && m_roiPanel->isRecording()) {
-        // ROI time series: spectrum on dwell boundary (poll is 1 s).
+    if (recording) {
         const int dwell = qMax(1, m_roiPanel->dwellSeconds());
-        if (m_pollTick % dwell == 0) {
-            m_device->requestSpectrum();
+        if (spectrumDwellDueMs(dwell)) {
+            requestSpectrumGated();
         }
     } else if (m_pollTick % 2 == 0) {
-        // Normal live view: spectrum about every 2 s.
-        m_device->requestSpectrum();
+        requestSpectrumGated();
     }
 }
 
@@ -441,24 +780,49 @@ void MainWindow::onConnected()
     m_serialLabel->setText(m_device->serialNumber());
     m_fwLabel->setText(m_device->firmwareVersion());
     m_statusLabel->setText(tr("Connected"));
-    appendLog(tr("Connected %1 fw %2 — live rates 1 s, spectrum ~2 s (ROI dwell when recording)")
-                  .arg(m_device->serialNumber(), m_device->firmwareVersion()));
     m_pollTick = 0;
-    // First live sample immediately; first spectrum on the next even tick / shortly after.
-    m_device->requestDataBuf();
-    m_device->requestTemperature();
-    m_pollTimer->start();
-    QTimer::singleShot(300, this, [this] {
-        if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
-            m_device->requestSpectrum();
+    m_spectrumInflight = false;
+    m_haveSpectrumSample = false;
+    configurePollForConnection();
+
+    if (isBleConnection()) {
+        appendLog(tr("Connected %1 fw %2 via BLE — 1 cmd/s; ROI dwell is wall-clock "
+                     "(spectrum may take longer than dwell over BLE)")
+                      .arg(m_device->serialNumber(), m_device->firmwareVersion()));
+        // Seed signal from last scan if we stored RSSI on the combo item.
+        const int row = m_deviceCombo->currentIndex();
+        if (row >= 0 && m_deviceCombo->itemData(row, RoleHasRssi).toBool()) {
+            updateSignalLabel(m_deviceCombo->itemData(row, RoleRssi).toInt(), true);
+        } else {
+            m_signalLabel->setText(tr("…"));
         }
-    });
+        // Single initial live sample; first spectrum on poll / after start recording.
+        m_device->requestDataBuf();
+        m_pollTimer->start();
+        startSlowStatusTimer();
+    } else {
+        appendLog(tr("Connected %1 fw %2 — live rates 1 s, spectrum ~2 s (ROI dwell when recording)")
+                      .arg(m_device->serialNumber(), m_device->firmwareVersion()));
+        m_signalLabel->setText(tr("n/a (USB)"));
+        m_device->requestDataBuf();
+        m_device->requestTemperature();
+        m_pollTimer->start();
+        startSlowStatusTimer();
+        QTimer::singleShot(300, this, [this] {
+            if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
+                requestSpectrumGated();
+            }
+        });
+    }
 }
 
 void MainWindow::onDisconnected()
 {
     m_pollTimer->stop();
+    stopSlowStatusTimer();
     m_pollTick = 0;
+    m_spectrumInflight = false;
+    m_haveSpectrumSample = false;
     setConnectedUi(false);
     if (m_roiPanel) {
         m_roiPanel->setConnected(false);
@@ -467,6 +831,8 @@ void MainWindow::onDisconnected()
     m_doseLabel->setText(QStringLiteral("—"));
     m_countLabel->setText(QStringLiteral("—"));
     m_tempLabel->setText(QStringLiteral("—"));
+    m_batteryLabel->setText(QStringLiteral("—"));
+    m_signalLabel->setText(QStringLiteral("—"));
     m_spectrumLiveLabel->setText(QStringLiteral("—"));
     m_serialLabel->setText(QStringLiteral("—"));
     m_fwLabel->setText(QStringLiteral("—"));
@@ -479,11 +845,23 @@ void MainWindow::onDisconnected()
 
 void MainWindow::onError(const QString &message)
 {
-    const QString line = tr("Error: %1").arg(message);
-    appendLog(line);
-
     using S = QtRadiacode::RadiaCodeDevice::State;
     const S st = m_device->state();
+
+    // Free spectrum gate: queue-full means requestSpectrum was not enqueued;
+    // transport failures never emit spectrumReady.
+    if (st == S::Connected || st == S::Connecting) {
+        m_spectrumInflight = false;
+    }
+
+    // Transient when poll outruns BLE/USB worker — do not spam the log.
+    if (message.contains(QLatin1String("Command queue full"), Qt::CaseInsensitive)
+        && (st == S::Connected || st == S::Connecting)) {
+        return;
+    }
+
+    const QString line = tr("Error: %1").arg(message);
+    appendLog(line);
 
     // A single failed USB op (e.g. one bulk timeout) must NOT stop live polling.
     // Only tear down UI when we are no longer in a live session.
@@ -492,6 +870,7 @@ void MainWindow::onError(const QString &message)
     }
 
     m_pollTimer->stop();
+    m_spectrumInflight = false;
     setConnectedUi(false);
     m_statusLabel->setText(tr("Error"));
     m_statusLabel->setToolTip(message);
@@ -548,15 +927,21 @@ void MainWindow::onDataBuf(const QList<QtRadiacode::RcDataItem> &items)
         m_doseLabel->setText(QString::number(rt->doseRate, 'g', 6));
     }
     if (rare) {
-        m_tempLabel->setText(
-            QStringLiteral("%1 °C  charge %2%")
-                .arg(rare->temperatureC, 0, 'f', 1)
-                .arg(rare->chargeLevel, 0, 'f', 0));
+        m_tempLabel->setText(QStringLiteral("%1 °C").arg(rare->temperatureC, 0, 'f', 1));
+        // chargeLevel is protocol % (Rare DATA_BUF); device sends Rare only periodically.
+        m_batteryLabel->setText(tr("%1 %").arg(rare->chargeLevel, 0, 'f', 0));
+        m_batteryLabel->setToolTip(
+            tr("Last Rare DATA_BUF: dose accum %1 s, flags 0x%2")
+                .arg(rare->durationSec)
+                .arg(rare->flags, 0, 16));
     }
 }
 
 void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
 {
+    m_spectrumInflight = false;
+    m_sinceSpectrumSample.restart();
+    m_haveSpectrumSample = true;
     m_lastSpectrum = sp;
     m_hasSpectrum = !sp.counts.isEmpty();
     m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
@@ -587,7 +972,7 @@ void MainWindow::setConnectedUi(bool connected)
     // Save uses last cached spectrum — allowed offline too after a capture.
     m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
     m_deviceCombo->setEnabled(!connected);
-    m_refreshBtn->setEnabled(!connected);
+    updateRefreshButton();
     if (m_roiPanel) {
         m_roiPanel->setConnected(connected);
     }
