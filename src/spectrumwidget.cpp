@@ -1,36 +1,212 @@
 #include "spectrumwidget.h"
 
+#include <QEvent>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QWheelEvent>
 #include <QtMath>
+
 #include <algorithm>
+#include <cmath>
+
+namespace {
+// Extra room: left for rotated "Counts" title; bottom for tick numbers + "Energy (keV)".
+constexpr int kMarginLeft = 64;
+constexpr int kMarginRight = 14;
+constexpr int kMarginTop = 14;
+constexpr int kMarginBottom = 48;
+constexpr double kMinSpanChannels = 8.0;
+constexpr double kZoomFactor = 1.18;
+} // namespace
 
 SpectrumWidget::SpectrumWidget(QWidget *parent)
     : QWidget(parent)
 {
-    setMinimumHeight(180);
+    setMinimumHeight(200);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMouseTracking(true);
+    setCursor(Qt::CrossCursor);
+    setToolTip(tr("Wheel: zoom X · Drag: pan · Double-click: reset view · Cursor: energy (keV)"));
 }
 
 void SpectrumWidget::setSpectrum(const QVector<quint32> &counts, float a0, float a1, float a2)
 {
+    const int oldN = channelCount();
     m_counts = counts;
     m_a0 = a0;
     m_a1 = a1;
     m_a2 = a2;
+
+    const int n = channelCount();
+    if (n <= 0) {
+        m_xMin = 0;
+        m_xMax = 1;
+        clearCursor();
+        update();
+        return;
+    }
+
+    // Keep zoom when channel count is unchanged (live spectrum refresh).
+    if (oldN != n || m_xMax <= m_xMin) {
+        m_xMin = 0;
+        m_xMax = static_cast<double>(n);
+    } else {
+        clampView();
+    }
     update();
 }
 
 void SpectrumWidget::clear()
 {
     m_counts.clear();
+    m_xMin = 0;
+    m_xMax = 1;
+    clearCursor();
+    update();
+}
+
+void SpectrumWidget::resetView()
+{
+    if (channelCount() > 0) {
+        m_xMin = 0;
+        m_xMax = static_cast<double>(channelCount());
+    } else {
+        m_xMin = 0;
+        m_xMax = 1;
+    }
+    update();
+}
+
+int SpectrumWidget::channelCount() const
+{
+    return m_counts.size();
+}
+
+bool SpectrumWidget::hasEnergyAxis() const
+{
+    // Device calibration: non-trivial linear/quadratic term, or non-zero offset with slope.
+    return std::fabs(static_cast<double>(m_a1)) > 1e-12
+        || std::fabs(static_cast<double>(m_a2)) > 1e-12;
+}
+
+double SpectrumWidget::channelToEnergy(double channel) const
+{
+    // Fractional channel via continuous polynomial (same form as spectrumChannelToEnergy).
+    const double ch = channel;
+    return static_cast<double>(m_a0) + static_cast<double>(m_a1) * ch
+        + static_cast<double>(m_a2) * ch * ch;
+}
+
+QRect SpectrumWidget::plotRect() const
+{
+    return QRect(kMarginLeft,
+                 kMarginTop,
+                 std::max(1, width() - kMarginLeft - kMarginRight),
+                 std::max(1, height() - kMarginTop - kMarginBottom));
+}
+
+void SpectrumWidget::clampView()
+{
+    const int n = channelCount();
+    if (n <= 0) {
+        m_xMin = 0;
+        m_xMax = 1;
+        return;
+    }
+    const double nD = static_cast<double>(n);
+    if (m_xMax < m_xMin) {
+        std::swap(m_xMin, m_xMax);
+    }
+    double span = m_xMax - m_xMin;
+    if (span < kMinSpanChannels) {
+        const double mid = 0.5 * (m_xMin + m_xMax);
+        m_xMin = mid - 0.5 * kMinSpanChannels;
+        m_xMax = mid + 0.5 * kMinSpanChannels;
+        span = kMinSpanChannels;
+    }
+    if (span > nD) {
+        m_xMin = 0;
+        m_xMax = nD;
+        return;
+    }
+    if (m_xMin < 0) {
+        m_xMax -= m_xMin;
+        m_xMin = 0;
+    }
+    if (m_xMax > nD) {
+        m_xMin -= (m_xMax - nD);
+        m_xMax = nD;
+        if (m_xMin < 0) {
+            m_xMin = 0;
+        }
+    }
+}
+
+double SpectrumWidget::channelToX(double channel, const QRect &plot) const
+{
+    const double span = std::max(1e-9, m_xMax - m_xMin);
+    const double t = (channel - m_xMin) / span;
+    return plot.left() + t * plot.width();
+}
+
+double SpectrumWidget::xToChannel(int x, const QRect &plot) const
+{
+    if (plot.width() <= 0) {
+        return m_xMin;
+    }
+    const double t = (static_cast<double>(x) - plot.left()) / static_cast<double>(plot.width());
+    return m_xMin + t * (m_xMax - m_xMin);
+}
+
+quint32 SpectrumWidget::maxCountInView() const
+{
+    const int n = channelCount();
+    if (n <= 0) {
+        return 1;
+    }
+    const int i0 = std::max(0, static_cast<int>(std::floor(m_xMin)));
+    const int i1 = std::min(n, static_cast<int>(std::ceil(m_xMax)));
+    quint32 maxC = 1;
+    for (int i = i0; i < i1; ++i) {
+        maxC = std::max(maxC, m_counts[i]);
+    }
+    return maxC;
+}
+
+void SpectrumWidget::clearCursor()
+{
+    if (m_cursorCh == -1) {
+        return;
+    }
+    m_cursorCh = -1;
+    emit cursorInfoChanged(-1, 0.0, 0);
+    update();
+}
+
+void SpectrumWidget::setCursorFromPos(const QPoint &pos)
+{
+    const QRect plot = plotRect();
+    if (m_counts.isEmpty() || !plot.contains(pos)) {
+        clearCursor();
+        return;
+    }
+    const double chF = xToChannel(pos.x(), plot);
+    int ch = static_cast<int>(std::floor(chF));
+    ch = std::clamp(ch, 0, channelCount() - 1);
+    if (ch == m_cursorCh) {
+        return;
+    }
+    m_cursorCh = ch;
+    const double e = channelToEnergy(static_cast<double>(ch));
+    const quint32 c = m_counts[ch];
+    emit cursorInfoChanged(ch, e, c);
     update();
 }
 
 void SpectrumWidget::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    p.fillRect(rect(), QColor(24, 26, 30));
-    p.setRenderHint(QPainter::Antialiasing, false);
+    drawBackground(p);
 
     if (m_counts.isEmpty()) {
         p.setPen(QColor(160, 160, 160));
@@ -38,37 +214,258 @@ void SpectrumWidget::paintEvent(QPaintEvent *)
         return;
     }
 
-    const int n = m_counts.size();
-    quint32 maxC = 1;
-    for (quint32 c : m_counts) {
-        maxC = std::max(maxC, c);
-    }
+    const QRect plot = plotRect();
+    const quint32 maxC = maxCountInView();
+    drawGridAndAxes(p, plot, maxC);
+    drawSpectrum(p, plot, maxC);
+    drawCursor(p, plot);
+}
 
-    const int left = 48;
-    const int right = 12;
-    const int top = 12;
-    const int bottom = 28;
-    const QRect plot(left, top, width() - left - right, height() - top - bottom);
+void SpectrumWidget::drawBackground(QPainter &p) const
+{
+    p.fillRect(rect(), QColor(24, 26, 30));
+}
 
-    p.setPen(QColor(70, 70, 75));
+void SpectrumWidget::drawGridAndAxes(QPainter &p, const QRect &plot, quint32 maxC) const
+{
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(QColor(55, 58, 64));
+    p.setBrush(QColor(30, 32, 38));
     p.drawRect(plot);
 
-    // Log-ish vertical scale for sparse spectra (sqrt for readability).
-    p.setPen(QColor(90, 180, 255));
-    for (int i = 0; i < n; ++i) {
-        const double t = qSqrt(double(m_counts[i]) / double(maxC));
-        const int x0 = plot.left() + (i * plot.width()) / n;
-        const int x1 = plot.left() + ((i + 1) * plot.width()) / n;
-        const int h = int(t * (plot.height() - 1));
-        p.fillRect(x0, plot.bottom() - h, std::max(1, x1 - x0), h, QColor(70, 150, 255, 200));
+    // Vertical grid + X labels
+    const int xTicks = 6;
+    p.setFont(font());
+    for (int t = 0; t <= xTicks; ++t) {
+        const double ch = m_xMin + (m_xMax - m_xMin) * (static_cast<double>(t) / xTicks);
+        const int x = static_cast<int>(std::lround(channelToX(ch, plot)));
+        p.setPen(QColor(45, 48, 54));
+        p.drawLine(x, plot.top(), x, plot.bottom());
+        p.setPen(QColor(170, 172, 180));
+        QString label;
+        if (hasEnergyAxis()) {
+            label = QString::number(channelToEnergy(ch), 'f', ch >= 100 ? 0 : 1);
+        } else {
+            label = QString::number(static_cast<int>(std::lround(ch)));
+        }
+        const QFontMetrics fm = p.fontMetrics();
+        const int tw = fm.horizontalAdvance(label);
+        // Tick numbers just under the plot (above the axis title).
+        p.drawText(x - tw / 2, plot.bottom() + fm.ascent() + 4, label);
     }
 
-    p.setPen(QColor(180, 180, 180));
-    p.drawText(4, plot.center().y(), QString::number(maxC));
-    p.drawText(plot.left(), height() - 8, QStringLiteral("ch 0"));
-    p.drawText(plot.right() - 40, height() - 8, QStringLiteral("ch %1").arg(n - 1));
-    if (m_a1 != 0.0f || m_a2 != 0.0f) {
-        p.drawText(plot.center().x() - 40, height() - 8,
-                   QStringLiteral("~keV calib a0=%1").arg(m_a0, 0, 'f', 1));
+    // Horizontal grid + Y labels (sqrt scale → show actual count levels)
+    const int yTicks = 4;
+    const QFontMetrics fmY = p.fontMetrics();
+    for (int t = 0; t <= yTicks; ++t) {
+        const double u = static_cast<double>(t) / yTicks; // 0..1 in sqrt space
+        const int y = plot.bottom() - static_cast<int>(u * (plot.height() - 1));
+        p.setPen(QColor(45, 48, 54));
+        p.drawLine(plot.left(), y, plot.right(), y);
+        const double countVal = u * u * static_cast<double>(maxC);
+        p.setPen(QColor(170, 172, 180));
+        const QString label = (countVal >= 1000.0)
+            ? QString::number(countVal / 1000.0, 'f', 1) + QStringLiteral("k")
+            : QString::number(static_cast<int>(std::lround(countVal)));
+        // Right-align count numbers next to the plot (leave strip for Y title on far left).
+        const int tw = fmY.horizontalAdvance(label);
+        p.drawText(plot.left() - 6 - tw, y + fmY.ascent() / 2, label);
     }
+
+    p.setPen(QColor(130, 132, 140));
+    const QString xTitle = hasEnergyAxis() ? tr("Energy (keV)") : tr("Channel");
+    const QFontMetrics fmTitle = p.fontMetrics();
+    const int xTitleW = fmTitle.horizontalAdvance(xTitle);
+    // Axis title below tick numbers so they do not overlap.
+    p.drawText(plot.center().x() - xTitleW / 2, height() - 6, xTitle);
+
+    // Rotated Y title on the far left edge.
+    const QString yTitle = tr("Counts (√ scale)");
+    p.save();
+    p.translate(12, plot.center().y() + fmTitle.horizontalAdvance(yTitle) / 2);
+    p.rotate(-90);
+    p.drawText(0, 0, yTitle);
+    p.restore();
+}
+
+void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) const
+{
+    const int n = channelCount();
+    const int i0 = std::max(0, static_cast<int>(std::floor(m_xMin)));
+    const int i1 = std::min(n, static_cast<int>(std::ceil(m_xMax)));
+    if (i0 >= i1) {
+        return;
+    }
+
+    p.setPen(Qt::NoPen);
+    const QColor bar(70, 150, 255, 210);
+    const QColor barHi(110, 190, 255, 230);
+
+    for (int i = i0; i < i1; ++i) {
+        const double x0 = channelToX(static_cast<double>(i), plot);
+        const double x1 = channelToX(static_cast<double>(i + 1), plot);
+        const int left = static_cast<int>(std::floor(x0));
+        const int right = static_cast<int>(std::ceil(x1));
+        const int w = std::max(1, right - left);
+        const double t = qSqrt(static_cast<double>(m_counts[i]) / static_cast<double>(maxC));
+        const int h = static_cast<int>(t * (plot.height() - 1));
+        if (h <= 0) {
+            continue;
+        }
+        p.fillRect(left, plot.bottom() - h, w, h, (i == m_cursorCh) ? barHi : bar);
+    }
+
+    p.setPen(QColor(70, 72, 80));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(plot);
+}
+
+void SpectrumWidget::drawCursor(QPainter &p, const QRect &plot) const
+{
+    if (m_cursorCh < 0 || m_cursorCh >= channelCount()) {
+        return;
+    }
+
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const double xMid = 0.5
+        * (channelToX(static_cast<double>(m_cursorCh), plot)
+           + channelToX(static_cast<double>(m_cursorCh + 1), plot));
+    const int x = static_cast<int>(std::lround(xMid));
+
+    p.setPen(QPen(QColor(255, 200, 80, 220), 1, Qt::DashLine));
+    p.drawLine(x, plot.top(), x, plot.bottom());
+
+    const double e = channelToEnergy(static_cast<double>(m_cursorCh));
+    const quint32 c = m_counts[m_cursorCh];
+    QString text;
+    if (hasEnergyAxis()) {
+        text = tr("E = %1 keV  ·  ch %2  ·  N = %3")
+                   .arg(e, 0, 'f', 1)
+                   .arg(m_cursorCh)
+                   .arg(c);
+    } else {
+        text = tr("ch %1  ·  N = %2").arg(m_cursorCh).arg(c);
+    }
+
+    const QFontMetrics fm(p.font());
+    const int pad = 6;
+    const int tw = fm.horizontalAdvance(text) + 2 * pad;
+    const int th = fm.height() + 2 * pad;
+    int bx = x + 8;
+    int by = plot.top() + 8;
+    if (bx + tw > plot.right() - 2) {
+        bx = x - 8 - tw;
+    }
+    if (bx < plot.left() + 2) {
+        bx = plot.left() + 2;
+    }
+    if (by + th > plot.bottom() - 2) {
+        by = plot.bottom() - th - 2;
+    }
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(20, 22, 28, 220));
+    p.drawRoundedRect(QRect(bx, by, tw, th), 4, 4);
+    p.setPen(QColor(255, 220, 140));
+    p.drawText(bx + pad, by + pad + fm.ascent(), text);
+}
+
+void SpectrumWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_panning && !m_counts.isEmpty()) {
+        const QRect plot = plotRect();
+        const int dx = event->pos().x() - m_lastPanPos.x();
+        m_lastPanPos = event->pos();
+        if (plot.width() > 0 && dx != 0) {
+            const double span = m_xMax - m_xMin;
+            const double dCh = -static_cast<double>(dx) / static_cast<double>(plot.width()) * span;
+            m_xMin += dCh;
+            m_xMax += dCh;
+            clampView();
+            setCursorFromPos(event->pos());
+            update();
+        }
+        event->accept();
+        return;
+    }
+    setCursorFromPos(event->pos());
+    event->accept();
+}
+
+void SpectrumWidget::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && plotRect().contains(event->pos())
+        && !m_counts.isEmpty()) {
+        m_panning = true;
+        m_lastPanPos = event->pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void SpectrumWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && m_panning) {
+        m_panning = false;
+        setCursor(Qt::CrossCursor);
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void SpectrumWidget::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        resetView();
+        setCursorFromPos(event->pos());
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void SpectrumWidget::wheelEvent(QWheelEvent *event)
+{
+    if (m_counts.isEmpty()) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+    const QRect plot = plotRect();
+    const QPoint pos = event->position().toPoint();
+    if (!plot.contains(pos)) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+
+    const double anchor = xToChannel(pos.x(), plot);
+    const double span = m_xMax - m_xMin;
+    const double steps = event->angleDelta().y() / 120.0;
+    if (std::fabs(steps) < 1e-6) {
+        event->accept();
+        return;
+    }
+    // Wheel up (positive) → zoom in.
+    const double factor = std::pow(kZoomFactor, -steps);
+    double newSpan = span * factor;
+    const double nD = static_cast<double>(channelCount());
+    newSpan = std::clamp(newSpan, kMinSpanChannels, nD);
+
+    const double t = (span > 1e-12) ? (anchor - m_xMin) / span : 0.5;
+    m_xMin = anchor - t * newSpan;
+    m_xMax = m_xMin + newSpan;
+    clampView();
+    setCursorFromPos(pos);
+    update();
+    event->accept();
+}
+
+void SpectrumWidget::leaveEvent(QEvent *event)
+{
+    if (!m_panning) {
+        clearCursor();
+    }
+    QWidget::leaveEvent(event);
 }

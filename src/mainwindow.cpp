@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "roitimeseries/roitimeseriespanel.h"
 #include "spectrumexport.h"
 #include "spectrumwidget.h"
 
@@ -15,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QTabWidget>
 #include <QTextStream>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -91,8 +93,67 @@ MainWindow::MainWindow(QWidget *parent)
     form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
     root->addWidget(liveBox);
 
+    auto *tabs = new QTabWidget(this);
     m_spectrum = new SpectrumWidget(this);
-    root->addWidget(m_spectrum, 1);
+    tabs->addTab(m_spectrum, tr("Spectrum"));
+
+    m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
+    tabs->addTab(m_roiPanel, tr("ROI time series"));
+    root->addWidget(tabs, 1);
+
+    connect(m_spectrum, &SpectrumWidget::cursorInfoChanged, this,
+            [this](int channel, double energyKeV, quint32 counts) {
+        if (channel < 0) {
+            return;
+        }
+        // Brief status line while hovering the spectrum cursor.
+        if (qAbs(m_lastSpectrum.a1) > 1e-12f || qAbs(m_lastSpectrum.a2) > 1e-12f
+            || qAbs(m_lastSpectrum.a0) > 1e-12f) {
+            statusBar()->showMessage(
+                tr("Cursor: E = %1 keV · ch %2 · N = %3")
+                    .arg(energyKeV, 0, 'f', 1)
+                    .arg(channel)
+                    .arg(counts),
+                2000);
+        } else {
+            statusBar()->showMessage(
+                tr("Cursor: ch %1 · N = %2").arg(channel).arg(counts), 2000);
+        }
+    });
+
+    connect(m_roiPanel, &RoiTimeSeriesPanel::logMessage, this, &MainWindow::appendLog);
+    connect(m_roiPanel, &RoiTimeSeriesPanel::requestSpectrumNow, this, [this] {
+        if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected) {
+            m_device->requestSpectrum();
+        }
+    });
+    // Reset then wait for worker completion before the first spectrum read — avoids
+    // USB response desync when reset is interleaved with the 1 s dataBuf/temperature poll.
+    connect(m_roiPanel, &RoiTimeSeriesPanel::requestSpectrumReset, this, [this] {
+        if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+            return;
+        }
+        m_device->spectrumReset();
+    });
+    connect(m_device, &QtRadiacode::RadiaCodeDevice::operationFinished, this,
+            [this](const QString &op) {
+        if (op != QStringLiteral("spectrumReset")) {
+            return;
+        }
+        if (!m_roiPanel || !m_roiPanel->isRecording()) {
+            return;
+        }
+        if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+            return;
+        }
+        // Brief settle after WR_VIRT_STRING spectrum clear, then first sample.
+        QTimer::singleShot(150, this, [this] {
+            if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected
+                && m_roiPanel && m_roiPanel->isRecording()) {
+                m_device->requestSpectrum();
+            }
+        });
+    });
 
     // Last events / errors — also mirrored to the status bar (bottom of the window).
     auto *msgBox = new QGroupBox(tr("Messages (log)"), this);
@@ -320,9 +381,15 @@ void MainWindow::pollData()
     m_device->requestDataBuf();
     m_device->requestTemperature();
 
-    // Every 2 s: spectrum (heavier transfer — not every tick).
     ++m_pollTick;
-    if (m_pollTick % 2 == 0) {
+    if (m_roiPanel && m_roiPanel->isRecording()) {
+        // ROI time series: spectrum on dwell boundary (poll is 1 s).
+        const int dwell = qMax(1, m_roiPanel->dwellSeconds());
+        if (m_pollTick % dwell == 0) {
+            m_device->requestSpectrum();
+        }
+    } else if (m_pollTick % 2 == 0) {
+        // Normal live view: spectrum about every 2 s.
         m_device->requestSpectrum();
     }
 }
@@ -330,10 +397,13 @@ void MainWindow::pollData()
 void MainWindow::onConnected()
 {
     setConnectedUi(true);
+    if (m_roiPanel) {
+        m_roiPanel->setConnected(true);
+    }
     m_serialLabel->setText(m_device->serialNumber());
     m_fwLabel->setText(m_device->firmwareVersion());
     m_statusLabel->setText(tr("Connected"));
-    appendLog(tr("Connected %1 fw %2 — live rates 1 s, spectrum ~2 s")
+    appendLog(tr("Connected %1 fw %2 — live rates 1 s, spectrum ~2 s (ROI dwell when recording)")
                   .arg(m_device->serialNumber(), m_device->firmwareVersion()));
     m_pollTick = 0;
     // First live sample immediately; first spectrum on the next even tick / shortly after.
@@ -352,6 +422,9 @@ void MainWindow::onDisconnected()
     m_pollTimer->stop();
     m_pollTick = 0;
     setConnectedUi(false);
+    if (m_roiPanel) {
+        m_roiPanel->setConnected(false);
+    }
     m_statusLabel->setText(tr("Disconnected"));
     m_doseLabel->setText(QStringLiteral("—"));
     m_countLabel->setText(QStringLiteral("—"));
@@ -451,6 +524,9 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
     m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
     m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
+    if (m_roiPanel) {
+        m_roiPanel->onSpectrum(sp);
+    }
 
     quint64 totalCounts = 0;
     for (quint32 c : sp.counts) {
@@ -474,6 +550,9 @@ void MainWindow::setConnectedUi(bool connected)
     m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
     m_deviceCombo->setEnabled(!connected);
     m_refreshBtn->setEnabled(!connected);
+    if (m_roiPanel) {
+        m_roiPanel->setConnected(connected);
+    }
 }
 
 void MainWindow::appendLog(const QString &line)

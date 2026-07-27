@@ -32,6 +32,20 @@ add_executable(radiacode-monitor WIN32
   src/spectrumwidget.cpp
   src/spectrumexport.h
   src/spectrumexport.cpp
+  src/roitimeseries/roimath.h
+  src/roitimeseries/roimath.cpp
+  src/roitimeseries/roirecorder.h
+  src/roitimeseries/roirecorder.cpp
+  src/roitimeseries/roiexport.h
+  src/roitimeseries/roiexport.cpp
+  src/roitimeseries/timeserieswidget.h
+  src/roitimeseries/timeserieswidget.cpp
+  src/roitimeseries/roitimeseriespanel.h
+  src/roitimeseries/roitimeseriespanel.cpp
+)
+
+target_include_directories(radiacode-monitor PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
 set_target_properties(radiacode-monitor PROPERTIES

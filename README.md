@@ -7,7 +7,12 @@ Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) 
 - List openable USB devices
 - Connect / disconnect by serial
 - Live count rate and dose rate (1 s poll)
-- Spectrum plot (1024 channels)
+- Interactive spectrum plot (channels / keV, √ Y-scale)
+  - **Wheel**: zoom X · **Drag**: pan · **Double-click**: reset view
+  - **Cursor**: vertical line with energy (keV), channel, and counts
+- **ROI time series** tab — universal energy-window rates vs time
+  - Presets (e.g. radon daughters ²¹⁴Pb / ²¹⁴Bi) or **custom ROIs** (add/edit/remove)
+  - Dwell sampling, **t₀** marker, multi-curve chart, **CSV export**
 - Temperature / charge when present in DATA_BUF
 
 ## Dependencies
@@ -65,11 +70,29 @@ This will:
 
 Pin the library via FetchContent or git submodule to private `qtradiacode` `v0.1.0`.
 
+## ROI time series
+
+Universal spectrum multiscaling: define energy ROIs, sample on a dwell interval, export rates for offline analysis.
+
+1. Connect; check energy calibration on the **Spectrum** tab.
+2. Open **ROI time series**. Load a **preset** (e.g. radon daughters) or **Add ROI** with name + keV range.
+3. Optionally set **t₀** (flush / end of irradiation / any experiment marker).
+4. **Start recording** (spectrum reset on start recommended).
+5. **Stop** → **Export CSV…** → fit offline (e.g. \(\ln(\mathrm{cps})\) vs `elapsed_s`).
+
+### Example: radon washout (²¹⁴Pb / ²¹⁴Bi)
+
+1. Preset **Radon daughters** (windows ~295, ~352, ~609 keV).
+2. Flush radon-rich air → **Set t₀ marker**.
+3. Record ~1.5–2 h; export CSV.
+4. Literature T½ (approx.): ²¹⁴Pb ~26.8 min, ²¹⁴Bi ~19.9 min (single-exp fit is approximate due to parent–daughter coupling).
+
+Rates are **incremental** ROI counts per second of **device live time** between successive spectra when live time increases; after a reset the first sample uses \(N/T_\mathrm{live}\).
+
 ## Features (later)
 
-- Spectrum live time, total counts
-- Save spectrum: CSV, TKA, ANSI N42.42, [NPES-JSON](https://github.com/OpenGammaProject/NPES-JSON)
-- Auto-refresh spectrum (~2 s)
+- In-app T½ fit, ROI bands on spectrum, background ROI
+- Save spectrum: CSV, TKA, ANSI N42.42, [NPES-JSON](https://github.com/OpenGammaProject/NPES-JSON) (already supported)
 
 ## Notes
 

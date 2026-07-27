@@ -11,6 +11,7 @@
 #include <QTimer>
 
 class SpectrumWidget;
+class RoiTimeSeriesPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -59,6 +60,7 @@ private:
     QLabel *m_logLabel = nullptr;
 
     SpectrumWidget *m_spectrum = nullptr;
+    RoiTimeSeriesPanel *m_roiPanel = nullptr;
     QtRadiacode::RcSpectrum m_lastSpectrum;
     bool m_hasSpectrum = false;
 };
