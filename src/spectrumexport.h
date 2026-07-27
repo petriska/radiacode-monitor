@@ -24,6 +24,11 @@ QString writeSpectrumFile(
 
 QString formatFilterString();
 Format formatFromFilter(const QString &selectedFilter);
+// Exact name-filter entry for QFileDialog::selectNameFilter (no "All files").
+QString nameFilterForFormat(Format format);
+// Stable keys for QSettings: "csv" | "tka" | "n42" | "npes"
+QString formatSettingsKey(Format format);
+Format formatFromSettingsKey(const QString &key);
 QString defaultExtension(Format format);
 
 // Strip known export extensions (.csv / .tka / .n42 / .json) from path/basename.

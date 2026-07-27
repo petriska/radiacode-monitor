@@ -291,6 +291,52 @@ Format formatFromFilter(const QString &selectedFilter)
     return Format::Csv;
 }
 
+QString nameFilterForFormat(Format format)
+{
+    switch (format) {
+    case Format::Tka:
+        return QStringLiteral("TKA spectrum (*.tka)");
+    case Format::N42:
+        return QStringLiteral("ANSI N42.42 (*.n42)");
+    case Format::Npes:
+        return QStringLiteral("NPES-JSON (*.json)");
+    case Format::Csv:
+    default:
+        return QStringLiteral("CSV (*.csv)");
+    }
+}
+
+QString formatSettingsKey(Format format)
+{
+    switch (format) {
+    case Format::Tka:
+        return QStringLiteral("tka");
+    case Format::N42:
+        return QStringLiteral("n42");
+    case Format::Npes:
+        return QStringLiteral("npes");
+    case Format::Csv:
+    default:
+        return QStringLiteral("csv");
+    }
+}
+
+Format formatFromSettingsKey(const QString &key)
+{
+    const QString k = key.trimmed().toLower();
+    if (k == QLatin1String("tka")) {
+        return Format::Tka;
+    }
+    if (k == QLatin1String("n42") || k == QLatin1String("n42.42")) {
+        return Format::N42;
+    }
+    if (k == QLatin1String("npes") || k == QLatin1String("json")
+        || k == QLatin1String("npes-json")) {
+        return Format::Npes;
+    }
+    return Format::Csv;
+}
+
 QString defaultExtension(Format format)
 {
     switch (format) {

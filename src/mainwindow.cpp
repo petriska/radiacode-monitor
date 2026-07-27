@@ -16,6 +16,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTextStream>
@@ -313,17 +314,29 @@ void MainWindow::onSaveSpectrum()
                                  .arg(m_lastSpectrum.durationSec)
                                  .arg(stamp);
 
+    QSettings settings;
+    const auto lastFormat = SpectrumExport::formatFromSettingsKey(
+        settings.value(QStringLiteral("spectrumExport/format"), QStringLiteral("csv"))
+            .toString());
+    const QString lastDir = settings
+                                .value(
+                                    QStringLiteral("spectrumExport/dir"),
+                                    QStandardPaths::writableLocation(
+                                        QStandardPaths::DocumentsLocation))
+                                .toString();
     const QString startDir =
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        QDir(lastDir).exists()
+            ? lastDir
+            : QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
     QFileDialog dlg(this, tr("Save spectrum"));
     dlg.setAcceptMode(QFileDialog::AcceptSave);
     dlg.setFileMode(QFileDialog::AnyFile);
     dlg.setNameFilters(SpectrumExport::formatFilterString().split(QStringLiteral(";;")));
-    dlg.selectNameFilter(QStringLiteral("CSV (*.csv)"));
+    dlg.selectNameFilter(SpectrumExport::nameFilterForFormat(lastFormat));
     dlg.setDirectory(startDir);
     dlg.selectFile(baseName); // no extension in the name field
-    dlg.setDefaultSuffix(SpectrumExport::defaultExtension(SpectrumExport::Format::Csv));
+    dlg.setDefaultSuffix(SpectrumExport::defaultExtension(lastFormat));
     dlg.setOption(QFileDialog::DontConfirmOverwrite, false);
 
     // When the user changes CSV / TKA / N42, update default suffix and filename.
@@ -372,6 +385,14 @@ void MainWindow::onSaveSpectrum()
         appendLog(tr("Save failed: %1").arg(err));
         return;
     }
+
+    // Remember format (and directory) for the next Save spectrum… dialog.
+    settings.setValue(
+        QStringLiteral("spectrumExport/format"),
+        SpectrumExport::formatSettingsKey(format));
+    settings.setValue(
+        QStringLiteral("spectrumExport/dir"),
+        QFileInfo(path).absolutePath());
 
     QString fmtName = QStringLiteral("CSV");
     if (format == SpectrumExport::Format::Tka) {

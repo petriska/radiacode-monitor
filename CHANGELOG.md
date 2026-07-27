@@ -17,6 +17,7 @@
   dwell sampling, t₀ marker, multi-curve chart, CSV export
 - Windows GUI subsystem (no console) and **NSIS** packaging
   (`scripts/package-windows.ps1`, `installer/radiacode-monitor.nsi`)
+- **QSettings**: remember last spectrum export format (and directory) after a successful save
 
 ### Notes
 
