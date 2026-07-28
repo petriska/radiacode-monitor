@@ -26,18 +26,56 @@ Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) 
 
 ## Build
 
+**Requirements:** CMake 3.21+, Qt 6 (Core + Widgets), C++17 compiler, libusb-1.0 (via QtRadiacode).
+
+### From Git clone (developers)
+
 ```bash
-# Expected layout:
+# Recommended layout:
 #   workspace/qtradiacode/       # library
 #   workspace/radiacode-monitor/ # this app
 
+git clone https://github.com/petriska/qtradiacode.git
+git clone https://github.com/petriska/radiacode-monitor.git
 cd radiacode-monitor
 mkdir build && cd build
 cmake .. -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
-# or: cmake .. -DQTRADIACODE_DIR=/path/to/qtradiacode
 cmake --build .
-./radiacode-monitor
 ```
+
+If the library is elsewhere:
+
+```bash
+cmake .. -DQTRADIACODE_DIR=/path/to/qtradiacode -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
+```
+
+If **no** local `qtradiacode` tree is found, CMake **downloads it automatically**
+via FetchContent (`QTRADIACODE_GIT_TAG`, default `v0.1.2` — needs network + git).
+
+### From GitHub Release ZIP (no git clone)
+
+1. On [qtradiacode Releases](https://github.com/petriska/qtradiacode/releases) download
+   **Source code (zip)** and extract it (folder is usually `qtradiacode-0.1.2` or similar).
+2. On [radiacode-monitor Releases](https://github.com/petriska/radiacode-monitor/releases)
+   download **Source code (zip)** and extract it next to the library.
+3. Point CMake at the library, or rename the library folder to `qtradiacode` as a sibling:
+
+```text
+parent/
+  qtradiacode/              # or: qtradiacode-0.1.2  (auto-detected)
+  radiacode-monitor-0.2.1/  # extracted app sources
+```
+
+```bash
+cd radiacode-monitor-0.2.1   # extracted app folder
+mkdir build && cd build
+cmake .. -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
+# if auto-detect fails:
+# cmake .. -DQTRADIACODE_DIR=../qtradiacode-0.1.2 -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
+cmake --build .
+```
+
+You can also extract **only** the monitor ZIP and let FetchContent pull the library (needs network).
 
 ## App icon
 
@@ -69,7 +107,7 @@ After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to t
 .\scripts\package-windows.ps1 `
   -BuildBinDir .\build\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\bin `
   -QtDir M:\Qt\6.11.1\msvc2022_64 `
-  -Version 0.2.0   # optional; omit to use CMakeLists.txt
+  -Version 0.2.1   # optional; omit to use CMakeLists.txt
 ```
 
 This will:
@@ -128,21 +166,21 @@ This will:
 Private repos:
 
 - App: https://github.com/petriska/radiacode-monitor
-- Library: https://github.com/petriska/qtradiacode (**`v0.1.1`**)
+- Library: https://github.com/petriska/qtradiacode (**`v0.1.2`**)
 
 Local development uses a **sibling** checkout (`../qtradiacode`). For a pinned clone:
 
 ```bash
-git clone git@github.com:petriska/qtradiacode.git
-cd qtradiacode && git checkout v0.1.1
+git clone https://github.com/petriska/qtradiacode.git
+cd qtradiacode && git checkout v0.1.2
 ```
 
-Or CMake FetchContent:
+Or CMake FetchContent (also used automatically if no local tree is found):
 
 ```cmake
 FetchContent_Declare(qtradiacode
-  GIT_REPOSITORY git@github.com:petriska/qtradiacode.git
-  GIT_TAG        v0.1.1
+  GIT_REPOSITORY https://github.com/petriska/qtradiacode.git
+  GIT_TAG        v0.1.2
 )
 ```
 

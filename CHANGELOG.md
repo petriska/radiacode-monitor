@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.1] — 2026-07-28
+
+### Added
+
+- Menu bar: **File** (Save Spectrum, Export ROI CSV, Exit) and **Help** (About, About Qt)
+- Root **LICENSE** (MIT), **THIRD_PARTY.md**, unofficial disclaimer in README / About
+- About dialog: app version, Qt runtime/build, license links, source/releases URLs
+- Transparent app icons (PNG/ICO); `scripts/make-icon-transparent.py`
+- CMake: app version from `project(... VERSION)` (`RADIACODE_MONITOR_VERSION`)
+- Packaging: auto version from CMakeLists for Windows/macOS scripts; ship LICENSE + THIRD_PARTY in Windows stage
+- CMake: find local `qtradiacode` sibling **or** `qtradiacode-*` release ZIP folders, else **FetchContent** pin `QTRADIACODE_GIT_TAG` (default `v0.1.2`)
+
+### Notes
+
+- Library pin for this release: **qtradiacode `v0.1.2`**
+- Build-from-source ZIP documented in README
+
 ## [0.2.0] — 2026-07-28
 
 ### Added
@@ -29,7 +46,7 @@
 ### Notes
 
 - Prefer **USB** while Home Assistant holds BLE
-- Library pin for this release: **qtradiacode `v0.1.1`**
+- Library pin for this release: **qtradiacode `v0.1.1`** (later builds use newer tags; see 0.2.1)
 
 ## [0.1.0] — 2026-07-27
 

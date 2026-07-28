@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(radiacode-monitor VERSION 0.2.0 LANGUAGES CXX)
+project(radiacode-monitor VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,19 +9,53 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 
-# Prefer sibling checkout of the library (local development).
-# Later: FetchContent / git submodule from private GitHub.
+# QtRadiacode library: sibling checkout, explicit -DQTRADIACODE_DIR=..., or FetchContent.
+# Default pin for automatic download (override with -DQTRADIACODE_GIT_TAG=...).
+set(QTRADIACODE_GIT_TAG "v0.1.2" CACHE STRING
+  "Git tag/branch for FetchContent when no local qtradiacode tree is found")
+
 set(QTRADIACODE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../qtradiacode"
-    CACHE PATH "Path to qtradiacode library source")
-if(NOT EXISTS "${QTRADIACODE_DIR}/CMakeLists.txt")
-  message(FATAL_ERROR
-    "QtRadiacode not found at QTRADIACODE_DIR=${QTRADIACODE_DIR}. "
-    "Clone qtradiacode next to this project or pass -DQTRADIACODE_DIR=...")
+    CACHE PATH "Path to qtradiacode library source (optional if FetchContent is used)")
+
+set(_qtradiacode_src "")
+if(EXISTS "${QTRADIACODE_DIR}/CMakeLists.txt")
+  set(_qtradiacode_src "${QTRADIACODE_DIR}")
+  message(STATUS "QtRadiacode: local tree ${QTRADIACODE_DIR}")
+else()
+  # GitHub source ZIPs extract as qtradiacode-<tag> (with or without leading v).
+  file(GLOB _qtr_zip_dirs
+    "${CMAKE_CURRENT_SOURCE_DIR}/../qtradiacode-*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../qtradiacode-v*"
+  )
+  foreach(_cand IN LISTS _qtr_zip_dirs)
+    if(EXISTS "${_cand}/CMakeLists.txt")
+      set(_qtradiacode_src "${_cand}")
+      message(STATUS "QtRadiacode: local tree ${_cand} (release ZIP layout)")
+      break()
+    endif()
+  endforeach()
 endif()
 
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory("${QTRADIACODE_DIR}" "${CMAKE_BINARY_DIR}/qtradiacode")
+if(_qtradiacode_src STREQUAL "")
+  message(STATUS
+    "QtRadiacode: no local tree — FetchContent "
+    "https://github.com/petriska/qtradiacode.git (${QTRADIACODE_GIT_TAG})")
+  include(FetchContent)
+  FetchContent_Declare(qtradiacode
+    GIT_REPOSITORY https://github.com/petriska/qtradiacode.git
+    GIT_TAG        ${QTRADIACODE_GIT_TAG}
+  )
+  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(qtradiacode)
+else()
+  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${_qtradiacode_src}" "${CMAKE_BINARY_DIR}/qtradiacode")
+endif()
+unset(_qtradiacode_src)
+unset(_qtr_zip_dirs)
+unset(_cand)
 
 # WIN32 = Windows GUI subsystem (no console window). Ignored on Linux/macOS.
 set(_radiacode_monitor_sources
