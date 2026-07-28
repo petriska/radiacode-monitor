@@ -2,6 +2,8 @@
 
 Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) detectors using the **QtRadiacode** library.
 
+> **Unofficial community software.** Not affiliated with, endorsed by, or sponsored by the RadiaCode hardware manufacturer.
+
 ## Features (MVP)
 
 - Device list: **USB** + **BLE** (Refresh scans both)
@@ -60,24 +62,28 @@ After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to t
 
 ```powershell
 # From the radiacode-monitor repo root
+# Version is read automatically from CMakeLists.txt (project(... VERSION x.y.z))
 .\scripts\package-windows.ps1
 
-# Or with explicit paths / version:
+# Or with explicit paths / optional version override:
 .\scripts\package-windows.ps1 `
   -BuildBinDir .\build\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\bin `
   -QtDir M:\Qt\6.11.1\msvc2022_64 `
-  -Version 0.2.0
+  -Version 0.2.0   # optional; omit to use CMakeLists.txt
 ```
 
 This will:
 
-1. Stage files under `dist\stage\`
-2. Run **windeployqt** for Qt DLLs and plugins
-3. Build **`dist\RadiaCodeMonitor-<version>-win64.exe`** via `installer\radiacode-monitor.nsi`
+1. Resolve **version** from `CMakeLists.txt` (unless `-Version` is passed)
+2. Stage files under `dist\stage\`
+3. Run **windeployqt** for Qt DLLs and plugins
+4. Build **`dist\RadiaCodeMonitor-<version>-win64.exe`** via `installer\radiacode-monitor.nsi`  
+   (`/DPRODUCT_VERSION=…` is always set by the script)
 
 | Path | Role |
 |------|------|
-| `installer/radiacode-monitor.nsi` | NSIS script |
+| `CMakeLists.txt` | **Source of version** (`project(... VERSION x.y.z)`) |
+| `installer/radiacode-monitor.nsi` | NSIS script (version from packaging script) |
 | `installer/license.txt` | License page in the wizard |
 | `scripts/package-windows.ps1` | Stage + windeployqt + makensis |
 | `dist/` | Output (gitignored) |
@@ -88,13 +94,13 @@ After a **Release** build of the `.app` (Qt Creator kit or CLI):
 
 ```bash
 # From the radiacode-monitor repo root
+# Version is read automatically from CMakeLists.txt (project(... VERSION x.y.z))
 ./scripts/package-macos.sh
 
-# Explicit paths / DMG:
+# Explicit paths / DMG (optional --version override):
 ./scripts/package-macos.sh \
   --bin-dir build/Qt_6_11_1_for_macOS_Release/bin \
   --qt-dir "$HOME/Qt/6.11.1/macos" \
-  --version 0.2.0 \
   --dmg
 ```
 
@@ -189,4 +195,7 @@ This application (and the companion [qtradiacode](https://github.com/petriska/qt
 
 ## License
 
-MIT (same spirit as QtRadiacode). See the library repository for protocol attribution.
+- **This application:** [MIT](LICENSE)
+- **Third-party libraries** shipped with binary packages (Qt, libusb, QtRadiacode, …): see **[THIRD_PARTY.md](THIRD_PARTY.md)**
+
+Qt and libusb are used as **shared libraries** (LGPL-friendly packaging via `windeployqt` / `macdeployqt`). Protocol notes and attribution for the companion library live in [qtradiacode](https://github.com/petriska/qtradiacode).

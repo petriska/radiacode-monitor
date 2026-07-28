@@ -146,7 +146,7 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     connect(m_stopBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onStop);
     connect(m_clearBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onClear);
     connect(m_t0Btn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onSetT0);
-    connect(m_exportBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onExport);
+    connect(m_exportBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::exportCsv);
     connect(m_addRoiBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onAddRoi);
     connect(m_removeRoiBtn, &QPushButton::clicked, this, &RoiTimeSeriesPanel::onRemoveRoi);
     connect(m_presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -629,7 +629,7 @@ void RoiTimeSeriesPanel::onSetT0()
     updateStatus();
 }
 
-void RoiTimeSeriesPanel::onExport()
+void RoiTimeSeriesPanel::exportCsv()
 {
     if (m_recorder->sampleCount() == 0) {
         QMessageBox::information(this, tr("Export"), tr("No samples to export."));

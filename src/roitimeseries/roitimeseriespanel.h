@@ -36,6 +36,8 @@ public:
 
 public slots:
     void setConnected(bool connected);
+    /// Same as the "Export CSV…" button (ROI time series samples).
+    void exportCsv();
 
 signals:
     void recordingChanged(bool recording);
@@ -50,7 +52,6 @@ private slots:
     void onStop();
     void onClear();
     void onSetT0();
-    void onExport();
     void onPresetChanged(int index);
     void onAddRoi();
     void onRemoveRoi();

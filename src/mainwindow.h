@@ -4,6 +4,7 @@
 #include "discovery/blediscovery.h"
 #include "protocol/types.h"
 
+#include <QAction>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QLabel>
@@ -27,6 +28,8 @@ private slots:
     void onDisconnectClicked();
     void onResetSpectrum();
     void onSaveSpectrum();
+    void onAbout();
+    void onAboutQt();
     void pollData();
 
     void onConnected();
@@ -47,6 +50,7 @@ private:
     static constexpr int RoleRssi = Qt::UserRole + 2;
     static constexpr int RoleHasRssi = Qt::UserRole + 3;
 
+    void setupMenuBar();
     void setConnectedUi(bool connected);
     void appendLog(const QString &line);
     static QString formatDuration(quint32 sec);
@@ -92,6 +96,8 @@ private:
     QPushButton *m_disconnectBtn = nullptr;
     QPushButton *m_resetSpectrumBtn = nullptr;
     QPushButton *m_saveSpectrumBtn = nullptr;
+    QAction *m_saveSpectrumAct = nullptr;
+    QAction *m_exportRoiCsvAct = nullptr;
 
     QLabel *m_statusLabel = nullptr;
     QLabel *m_serialLabel = nullptr;

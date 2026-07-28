@@ -2,12 +2,16 @@
 #
 # Usage:
 #   .\scripts\package-windows.ps1
-#   .\scripts\package-windows.ps1 -BuildBinDir M:\path\to\build\bin -QtDir M:\Qt\6.11.1\msvc2022_64 -Version 0.1.0
+#   .\scripts\package-windows.ps1 -BuildBinDir M:\path\to\build\bin -QtDir M:\Qt\6.11.1\msvc2022_64
+#   .\scripts\package-windows.ps1 -Version 0.2.1   # optional override
+#
+# Version defaults to project(... VERSION x.y.z) in CMakeLists.txt (single source of truth).
+# The script always passes /DPRODUCT_VERSION=... to makensis.
 #
 param(
     [string] $BuildBinDir = "",
     [string] $QtDir = "",
-    [string] $Version = "0.1.0",
+    [string] $Version = "",
     [switch] $SkipWindeploy
 )
 
@@ -18,6 +22,19 @@ $InstallerDir = Join-Path $RepoRoot "installer"
 $NsiPath = Join-Path $InstallerDir "radiacode-monitor.nsi"
 $DistDir = Join-Path $RepoRoot "dist"
 $StageDir = Join-Path $DistDir "stage"
+
+function Get-ProjectVersion {
+    $cmake = Join-Path $RepoRoot "CMakeLists.txt"
+    if (-not (Test-Path $cmake)) {
+        throw "CMakeLists.txt not found: $cmake"
+    }
+    $text = Get-Content -Raw $cmake
+    # project(radiacode-monitor VERSION 0.2.0 LANGUAGES CXX)
+    if ($text -match 'project\s*\(\s*radiacode-monitor\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+        return $Matches[1]
+    }
+    throw "Could not parse project VERSION from CMakeLists.txt (expected: project(radiacode-monitor VERSION x.y.z ...))."
+}
 
 function Find-Makensis {
     $candidates = @(
@@ -104,6 +121,12 @@ function Find-Windeploy([string] $qtRoot) {
 }
 
 # --- resolve tools & inputs -------------------------------------------------
+if (-not $Version) {
+    $Version = Get-ProjectVersion
+} elseif ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+') {
+    throw "Invalid -Version '$Version' (expected x.y.z, e.g. 0.2.0)."
+}
+
 $BuildBinDir = Resolve-BuildBinDir $BuildBinDir
 $QtDir = Resolve-QtDir $QtDir
 $Makensis = Find-Makensis
@@ -143,6 +166,14 @@ Copy-Item (Join-Path $BuildBinDir "libusb-1.0.dll") $StageDir
 $licenseSrc = Join-Path $InstallerDir "license.txt"
 if (Test-Path $licenseSrc) {
     Copy-Item $licenseSrc (Join-Path $StageDir "LICENSE.txt")
+}
+$mitSrc = Join-Path $RepoRoot "LICENSE"
+if (Test-Path $mitSrc) {
+    Copy-Item $mitSrc (Join-Path $StageDir "LICENSE-MIT.txt")
+}
+$thirdPartySrc = Join-Path $RepoRoot "THIRD_PARTY.md"
+if (Test-Path $thirdPartySrc) {
+    Copy-Item $thirdPartySrc (Join-Path $StageDir "THIRD_PARTY.md")
 }
 $readmeSrc = Join-Path $RepoRoot "README.md"
 if (Test-Path $readmeSrc) {

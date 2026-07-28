@@ -4,9 +4,12 @@
 # Usage (from repo root or anywhere):
 #   ./scripts/package-macos.sh
 #   ./scripts/package-macos.sh --bin-dir build/Qt_6_11_1_for_macOS_Release/bin
-#   ./scripts/package-macos.sh --qt-dir "$HOME/Qt/6.11.1/macos" --version 0.1.0
+#   ./scripts/package-macos.sh --qt-dir "$HOME/Qt/6.11.1/macos"
+#   ./scripts/package-macos.sh --version 0.2.1   # optional override
 #   ./scripts/package-macos.sh --dmg          # also create a simple DMG
 #   ./scripts/package-macos.sh --skip-deploy  # only re-stage / re-sign
+#
+# Version defaults to project(... VERSION x.y.z) in CMakeLists.txt.
 #
 # Output:
 #   dist/Radiacode Monitor.app
@@ -15,7 +18,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="0.1.0"
+VERSION=""
 BIN_DIR=""
 QT_DIR=""
 DO_DMG=0
@@ -24,8 +27,21 @@ APP_NAME="Radiacode Monitor"
 BUNDLE_ID="io.qtradiacode.radiacode-monitor"
 
 usage() {
-  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
+}
+
+read_project_version() {
+  local cmake="$REPO_ROOT/CMakeLists.txt"
+  [[ -f "$cmake" ]] || { echo "CMakeLists.txt not found: $cmake" >&2; exit 1; }
+  # project(radiacode-monitor VERSION 0.2.0 LANGUAGES CXX)
+  local ver
+  ver="$(sed -nE 's/.*project[[:space:]]*\([[:space:]]*radiacode-monitor[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "$cmake" | head -1)"
+  if [[ -z "$ver" ]]; then
+    echo "Could not parse project VERSION from CMakeLists.txt" >&2
+    exit 1
+  fi
+  echo "$ver"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -39,6 +55,13 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage 1 ;;
   esac
 done
+
+if [[ -z "$VERSION" ]]; then
+  VERSION="$(read_project_version)"
+elif [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Invalid --version '$VERSION' (expected x.y.z)" >&2
+  exit 1
+fi
 
 find_bin_dir() {
   if [[ -n "$BIN_DIR" ]]; then

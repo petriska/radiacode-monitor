@@ -3,6 +3,10 @@
 ; Built by scripts/package-windows.ps1 which stages the app + Qt + libusb, then:
 ;   makensis /DPRODUCT_VERSION=x.y.z /DSTAGE_DIR=... /DOUT_DIR=... radiacode-monitor.nsi
 ;
+; PRODUCT_VERSION is set by package-windows.ps1 from CMakeLists.txt
+;   (project(... VERSION x.y.z)). Do not bump it here for releases — change
+;   CMakeLists.txt (or pass -Version to the packaging script).
+;
 ; Requires NSIS 3.x with Modern UI 2.
 
 Unicode true
@@ -20,7 +24,8 @@ ManifestDPIAware true
   !define PRODUCT_NAME "RadiaCode Monitor"
 !endif
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.2.0"
+  ; Fallback only if makensis is invoked without /DPRODUCT_VERSION=
+  !define PRODUCT_VERSION "0.0.0"
 !endif
 !ifndef PUBLISHER
   !define PUBLISHER "RadiaCode Monitor contributors"

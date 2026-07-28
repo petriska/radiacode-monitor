@@ -19,20 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-------------------------------------------------------------------------------
-Third-party components (shipped as separate shared libraries) retain their
-own licenses:
-
-  - Qt 6 — typically LGPL v3 (open-source builds) or Qt commercial
-  - libusb-1.0 — LGPL v2.1
-  - QtRadiacode — MIT
-
-Details and links: see THIRD_PARTY.md in the source repository
-  https://github.com/petriska/radiacode-monitor/blob/main/THIRD_PARTY.md
-
-This installer bundles those shared libraries for convenience. Their source
-and full license texts are available from the respective upstream projects.
-
-Radiacode Monitor is an unofficial community application and is not
-affiliated with the RadiaCode hardware manufacturer.

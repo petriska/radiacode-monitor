@@ -6,6 +6,7 @@
 
 #include "discovery/usbdiscovery.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -15,6 +16,9 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeySequence>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QSettings>
 #include <QSizePolicy>
@@ -23,6 +27,17 @@
 #include <QTextStream>
 #include <QVBoxLayout>
 #include <QWidget>
+
+namespace {
+// Update when the repo / downloads page URL changes.
+constexpr char kReleasesUrl[] = "https://github.com/petriska/radiacode-monitor/releases";
+constexpr char kRepoUrl[] = "https://github.com/petriska/radiacode-monitor";
+constexpr char kLicenseUrl[] =
+    "https://github.com/petriska/radiacode-monitor/blob/main/LICENSE";
+constexpr char kThirdPartyUrl[] =
+    "https://github.com/petriska/radiacode-monitor/blob/main/THIRD_PARTY.md";
+constexpr char kQtRadiacodeUrl[] = "https://github.com/petriska/qtradiacode";
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -249,6 +264,9 @@ MainWindow::MainWindow(QWidget *parent)
         updateSignalLabel(rssiDbm, false);
     });
 
+    // After ROI panel exists (File → Export ROI CSV…).
+    setupMenuBar();
+
     setConnectedUi(false);
     refreshDeviceList();
 }
@@ -260,6 +278,88 @@ MainWindow::~MainWindow()
     if (m_device && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Disconnected) {
         m_device->disconnectFromDevice();
     }
+}
+
+void MainWindow::setupMenuBar()
+{
+    auto *fileMenu = menuBar()->addMenu(tr("&File"));
+
+    m_saveSpectrumAct = fileMenu->addAction(tr("&Save Spectrum…"), this,
+                                            &MainWindow::onSaveSpectrum);
+    m_saveSpectrumAct->setShortcut(QKeySequence::Save);
+    m_saveSpectrumAct->setToolTip(
+        tr("Save the last spectrum as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON."));
+    m_saveSpectrumAct->setEnabled(false);
+
+    m_exportRoiCsvAct = fileMenu->addAction(tr("Export ROI &CSV…"), this, [this] {
+        if (m_roiPanel) {
+            m_roiPanel->exportCsv();
+        }
+    });
+    m_exportRoiCsvAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+S")));
+    m_exportRoiCsvAct->setToolTip(
+        tr("Export recorded ROI time series samples to a CSV file."));
+
+    fileMenu->addSeparator();
+    auto *exitAct = fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
+    exitAct->setShortcut(QKeySequence::Quit);
+    exitAct->setMenuRole(QAction::QuitRole);
+
+    auto *helpMenu = menuBar()->addMenu(tr("&Help"));
+    auto *aboutAct = helpMenu->addAction(tr("&About Radiacode Monitor…"), this,
+                                         &MainWindow::onAbout);
+    aboutAct->setMenuRole(QAction::AboutRole);
+    auto *aboutQtAct = helpMenu->addAction(tr("About &Qt…"), this, &MainWindow::onAboutQt);
+    aboutQtAct->setMenuRole(QAction::AboutQtRole);
+}
+
+void MainWindow::onAbout()
+{
+    const QString appVersion = QApplication::applicationVersion();
+    const QString qtRuntime = QString::fromLatin1(qVersion());
+    const QString qtBuild = QStringLiteral(QT_VERSION_STR);
+
+    // Rich text so license / release links open in the browser.
+    const QString text = tr(
+        "<h3>Radiacode Monitor</h3>"
+        "<p>Version <b>%1</b></p>"
+        "<p>Desktop monitor for RadiaCode spectrometers (USB and BLE), "
+        "built with <a href=\"%2\">QtRadiacode</a> and Qt.</p>"
+        "<p><i>Unofficial community software. Not affiliated with, endorsed by, "
+        "or sponsored by the RadiaCode hardware manufacturer.</i></p>"
+        "<p><b>Qt</b><br>"
+        "Runtime: %3<br>"
+        "Built against: %4<br>"
+        "Typically used under LGPL v3 (open-source Qt) as shared libraries — "
+        "see third-party notices.</p>"
+        "<p><b>License</b><br>"
+        "This application: <b>MIT</b> — "
+        "<a href=\"%5\">LICENSE</a><br>"
+        "Third-party (Qt, libusb, QtRadiacode, …): "
+        "<a href=\"%6\">THIRD_PARTY.md</a></p>"
+        "<p><b>Source &amp; releases</b><br>"
+        "<a href=\"%7\">%7</a><br>"
+        "<a href=\"%8\">%8</a></p>")
+                             .arg(appVersion.isEmpty() ? QStringLiteral("—") : appVersion,
+                                  QString::fromUtf8(kQtRadiacodeUrl), qtRuntime, qtBuild,
+                                  QString::fromUtf8(kLicenseUrl),
+                                  QString::fromUtf8(kThirdPartyUrl),
+                                  QString::fromUtf8(kRepoUrl),
+                                  QString::fromUtf8(kReleasesUrl));
+
+    QMessageBox box(this);
+    box.setWindowTitle(tr("About Radiacode Monitor"));
+    box.setTextFormat(Qt::RichText);
+    box.setText(text);
+    box.setIconPixmap(windowIcon().pixmap(64, 64));
+    box.setStandardButtons(QMessageBox::Ok);
+    box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+    box.exec();
+}
+
+void MainWindow::onAboutQt()
+{
+    QMessageBox::aboutQt(this, tr("About Qt"));
 }
 
 int MainWindow::findDeviceRow(const QString &transport, const QString &id) const
@@ -483,6 +583,9 @@ void MainWindow::onResetSpectrum()
     m_spectrumLiveLabel->setText(QStringLiteral("—"));
     m_spectrumTotalLabel->setText(QStringLiteral("—"));
     m_saveSpectrumBtn->setEnabled(false);
+    if (m_saveSpectrumAct) {
+        m_saveSpectrumAct->setEnabled(false);
+    }
     m_spectrumInflight = false;
     m_device->spectrumReset();
     // Next auto-poll will reload; also request once after a short delay.
@@ -964,6 +1067,9 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
     m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
     m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
+    if (m_saveSpectrumAct) {
+        m_saveSpectrumAct->setEnabled(m_hasSpectrum);
+    }
     if (m_roiPanel) {
         m_roiPanel->onSpectrum(sp);
     }
@@ -989,6 +1095,9 @@ void MainWindow::setConnectedUi(bool connected)
     m_resetSpectrumBtn->setEnabled(connected);
     // Save uses last cached spectrum — allowed offline too after a capture.
     m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
+    if (m_saveSpectrumAct) {
+        m_saveSpectrumAct->setEnabled(m_hasSpectrum);
+    }
     m_deviceCombo->setEnabled(!connected);
     updateRefreshButton();
     if (m_roiPanel) {

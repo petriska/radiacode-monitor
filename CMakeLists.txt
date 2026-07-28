@@ -74,6 +74,11 @@ target_include_directories(radiacode-monitor PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
+# Single source of truth for app version (About dialog, packaging scripts).
+target_compile_definitions(radiacode-monitor PRIVATE
+  "RADIACODE_MONITOR_VERSION=\"${PROJECT_VERSION}\""
+)
+
 set_target_properties(radiacode-monitor PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   WIN32_EXECUTABLE TRUE
