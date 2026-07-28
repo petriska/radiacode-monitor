@@ -66,7 +66,7 @@ After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to t
 .\scripts\package-windows.ps1 `
   -BuildBinDir .\build\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\bin `
   -QtDir M:\Qt\6.11.1\msvc2022_64 `
-  -Version 0.1.0
+  -Version 0.2.0
 ```
 
 This will:
@@ -94,7 +94,7 @@ After a **Release** build of the `.app` (Qt Creator kit or CLI):
 ./scripts/package-macos.sh \
   --bin-dir build/Qt_6_11_1_for_macOS_Release/bin \
   --qt-dir "$HOME/Qt/6.11.1/macos" \
-  --version 0.1.0 \
+  --version 0.2.0 \
   --dmg
 ```
 

@@ -6,12 +6,15 @@
 #include "device/radiacodedevice.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QDateTime>
+#include <QEvent>
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStandardPaths>
@@ -19,7 +22,23 @@
 #include <QVBoxLayout>
 
 namespace {
-enum Col { ColEnabled = 0, ColName, ColEMin, ColEMax, ColCount };
+enum Col {
+    ColEnabled = 0,
+    ColName,
+    ColEMin,
+    ColEMax,
+    ColCounts, // cumulative counts in ROI from spectrum start
+    ColCps,    // ΔN/Δt over last spectrum interval (chart value while recording)
+    ColCount
+};
+
+QTableWidgetItem *makeReadOnlyStatsItem()
+{
+    auto *item = new QTableWidgetItem(QStringLiteral("—"));
+    item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    return item;
+}
 }
 
 RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWidget *parent)
@@ -30,6 +49,7 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
 
     // Controls live in MainWindow top row (next to Live); this panel is chart-only.
     m_controlsBox = new QGroupBox(tr("ROI time series"), this);
+    m_controlsBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *ctrlLay = new QVBoxLayout(m_controlsBox);
     ctrlLay->setContentsMargins(8, 8, 8, 8);
 
@@ -43,14 +63,30 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     ctrlLay->addLayout(rowPreset);
 
     m_roiTable = new QTableWidget(0, ColCount, m_controlsBox);
-    m_roiTable->setHorizontalHeaderLabels(
-        {tr("On"), tr("Name"), tr("E min (keV)"), tr("E max (keV)")});
-    m_roiTable->horizontalHeader()->setStretchLastSection(true);
+    m_roiTable->setHorizontalHeaderLabels({tr("On"), tr("Name"), tr("E min (keV)"),
+                                           tr("E max (keV)"), tr("Counts"), tr("cps")});
+    if (auto *hCounts = m_roiTable->horizontalHeaderItem(ColCounts)) {
+        hCounts->setToolTip(
+            tr("Total counts in this energy window from the current spectrum\n"
+               "(accumulated since the spectrum was started / last reset)."));
+    }
+    if (auto *hCps = m_roiTable->horizontalHeaderItem(ColCps)) {
+        hCps->setToolTip(
+            tr("Count rate in this window over the last spectrum interval (ΔN/Δt).\n"
+               "While recording, this is the same value written to the ROI time series chart."));
+    }
+    m_roiTable->horizontalHeader()->setStretchLastSection(false);
     m_roiTable->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    m_roiTable->horizontalHeader()->setSectionResizeMode(ColCounts, QHeaderView::ResizeToContents);
+    m_roiTable->horizontalHeader()->setSectionResizeMode(ColCps, QHeaderView::ResizeToContents);
     m_roiTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_roiTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_roiTable->setMinimumHeight(100);
-    m_roiTable->setMaximumHeight(160);
+    // No max height: table absorbs extra vertical space when stretched to Live height.
+    m_roiTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Click outside the table (or on empty space) clears the highlighted row.
+    m_roiTable->viewport()->installEventFilter(this);
+    qApp->installEventFilter(this);
     ctrlLay->addWidget(m_roiTable, 1);
 
     auto *rowRoiBtn = new QHBoxLayout;
@@ -138,6 +174,13 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     updateStatus();
 }
 
+RoiTimeSeriesPanel::~RoiTimeSeriesPanel()
+{
+    if (qApp) {
+        qApp->removeEventFilter(this);
+    }
+}
+
 void RoiTimeSeriesPanel::loadSettings()
 {
     QSettings settings;
@@ -201,14 +244,126 @@ void RoiTimeSeriesPanel::loadRoisToTable(const QVector<RoiWindow> &rois)
         en->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         en->setCheckState(r.enabled ? Qt::Checked : Qt::Unchecked);
         m_roiTable->setItem(row, ColEnabled, en);
-        m_roiTable->setItem(row, ColName, new QTableWidgetItem(r.name));
-        m_roiTable->setItem(row, ColEMin, new QTableWidgetItem(QString::number(r.eMinKeV, 'f', 1)));
-        m_roiTable->setItem(row, ColEMax, new QTableWidgetItem(QString::number(r.eMaxKeV, 'f', 1)));
-        // Keep stable id in UserRole on name cell.
-        m_roiTable->item(row, ColName)->setData(Qt::UserRole, r.id);
+        auto *nameItem = new QTableWidgetItem(r.name);
+        nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+        nameItem->setData(Qt::UserRole, r.id); // stable id for CSV / chart series
+        m_roiTable->setItem(row, ColName, nameItem);
+        auto *eMinItem = new QTableWidgetItem(QString::number(r.eMinKeV, 'f', 1));
+        eMinItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+        m_roiTable->setItem(row, ColEMin, eMinItem);
+        auto *eMaxItem = new QTableWidgetItem(QString::number(r.eMaxKeV, 'f', 1));
+        eMaxItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+        m_roiTable->setItem(row, ColEMax, eMaxItem);
+        ensureStatsItems(row);
     }
     m_blockTableSignal = false;
+    resetRoiRateBaseline();
+    if (m_hasLastSpectrum) {
+        updateRoiLiveStats(m_lastSpectrum);
+    }
     emitRoisChanged();
+}
+
+void RoiTimeSeriesPanel::ensureStatsItems(int row)
+{
+    if (!m_roiTable->item(row, ColCounts)) {
+        m_roiTable->setItem(row, ColCounts, makeReadOnlyStatsItem());
+    }
+    if (!m_roiTable->item(row, ColCps)) {
+        m_roiTable->setItem(row, ColCps, makeReadOnlyStatsItem());
+    }
+}
+
+void RoiTimeSeriesPanel::resetRoiRateBaseline()
+{
+    m_hasPrevStats = false;
+    m_prevLiveSec = 0;
+    m_prevRoiCounts.clear();
+}
+
+void RoiTimeSeriesPanel::clearRoiLiveStats()
+{
+    m_hasLastSpectrum = false;
+    m_lastSpectrum = {};
+    resetRoiRateBaseline();
+    m_blockTableSignal = true;
+    for (int row = 0; row < m_roiTable->rowCount(); ++row) {
+        ensureStatsItems(row);
+        m_roiTable->item(row, ColCounts)->setText(QStringLiteral("—"));
+        m_roiTable->item(row, ColCps)->setText(QStringLiteral("—"));
+    }
+    m_blockTableSignal = false;
+}
+
+void RoiTimeSeriesPanel::updateRoiLiveStats(const QtRadiacode::RcSpectrum &sp)
+{
+    if (sp.counts.isEmpty()) {
+        return;
+    }
+
+    m_lastSpectrum = sp;
+    m_hasLastSpectrum = true;
+
+    // Spectrum was reset on device (live time went backwards).
+    if (m_hasPrevStats && sp.durationSec < m_prevLiveSec) {
+        resetRoiRateBaseline();
+    }
+
+    const int n = sp.counts.size();
+    const QVector<RoiWindow> rois = roisFromTable();
+    QVector<quint64> curCounts(rois.size(), 0);
+    QVector<bool> valid(rois.size(), false);
+
+    for (int i = 0; i < rois.size(); ++i) {
+        int c0 = 0;
+        int c1 = 0;
+        if (roiToChannels(rois[i], sp.a0, sp.a1, sp.a2, n, &c0, &c1)) {
+            curCounts[i] = sumChannels(sp.counts, c0, c1);
+            valid[i] = true;
+        }
+    }
+
+    const bool canDelta = m_hasPrevStats && sp.durationSec > m_prevLiveSec
+        && m_prevRoiCounts.size() == curCounts.size();
+    const bool sameLive = m_hasPrevStats && sp.durationSec == m_prevLiveSec
+        && m_prevRoiCounts.size() == curCounts.size();
+    const double dt = canDelta ? static_cast<double>(sp.durationSec - m_prevLiveSec) : 0.0;
+
+    m_blockTableSignal = true;
+    for (int row = 0; row < m_roiTable->rowCount() && row < rois.size(); ++row) {
+        ensureStatsItems(row);
+        if (!valid[row]) {
+            m_roiTable->item(row, ColCounts)->setText(QStringLiteral("—"));
+            m_roiTable->item(row, ColCps)->setText(QStringLiteral("—"));
+            continue;
+        }
+        m_roiTable->item(row, ColCounts)->setText(QString::number(curCounts[row]));
+        if (canDelta && dt > 0.0) {
+            // Same formula as RoiTimeSeriesRecorder → chart series.
+            const quint64 dN = (curCounts[row] >= m_prevRoiCounts[row])
+                ? (curCounts[row] - m_prevRoiCounts[row])
+                : 0;
+            const double cps = static_cast<double>(dN) / dt;
+            m_roiTable->item(row, ColCps)->setText(QString::number(cps, 'f', 2));
+        } else if (sameLive) {
+            // Live time unchanged: keep previous cps text (do not flash "—").
+        } else if (sp.durationSec > 0) {
+            // First sample after connect/reset/edit: average rate over full live time.
+            const double cps =
+                static_cast<double>(curCounts[row]) / static_cast<double>(sp.durationSec);
+            m_roiTable->item(row, ColCps)->setText(QString::number(cps, 'f', 2));
+        } else {
+            m_roiTable->item(row, ColCps)->setText(QStringLiteral("—"));
+        }
+    }
+    m_blockTableSignal = false;
+
+    // Advance baseline only when live time moved forward (or after reset baseline).
+    if (!sameLive) {
+        m_hasPrevStats = true;
+        m_prevLiveSec = sp.durationSec;
+        m_prevRoiCounts = curCounts;
+    }
 }
 
 void RoiTimeSeriesPanel::emitRoisChanged()
@@ -257,6 +412,9 @@ void RoiTimeSeriesPanel::setConnected(bool connected)
     if (!connected && m_recording) {
         onStop();
     }
+    if (!connected) {
+        clearRoiLiveStats();
+    }
     m_startBtn->setEnabled(connected && !m_recording);
     updateStatus();
 }
@@ -292,12 +450,23 @@ void RoiTimeSeriesPanel::onAddRoi()
     en->setCheckState(Qt::Checked);
     m_roiTable->setItem(row, ColEnabled, en);
     auto *name = new QTableWidgetItem(tr("ROI %1").arg(row + 1));
+    name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
     name->setData(Qt::UserRole, makeRoiId(name->text()));
     m_roiTable->setItem(row, ColName, name);
-    m_roiTable->setItem(row, ColEMin, new QTableWidgetItem(QStringLiteral("100")));
-    m_roiTable->setItem(row, ColEMax, new QTableWidgetItem(QStringLiteral("200")));
+    auto *eMin = new QTableWidgetItem(QStringLiteral("100"));
+    eMin->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+    m_roiTable->setItem(row, ColEMin, eMin);
+    auto *eMax = new QTableWidgetItem(QStringLiteral("200"));
+    eMax->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+    m_roiTable->setItem(row, ColEMax, eMax);
+    ensureStatsItems(row);
     m_blockTableSignal = false;
     m_roiTable->selectRow(row);
+    // New row invalidates previous per-row baselines (size / indices change).
+    resetRoiRateBaseline();
+    if (m_hasLastSpectrum) {
+        updateRoiLiveStats(m_lastSpectrum);
+    }
     emitRoisChanged();
 }
 
@@ -309,6 +478,10 @@ void RoiTimeSeriesPanel::onRemoveRoi()
     const int row = m_roiTable->currentRow();
     if (row >= 0) {
         m_roiTable->removeRow(row);
+        resetRoiRateBaseline();
+        if (m_hasLastSpectrum) {
+            updateRoiLiveStats(m_lastSpectrum);
+        }
         emitRoisChanged();
     }
 }
@@ -331,7 +504,48 @@ void RoiTimeSeriesPanel::onTableChanged()
             m_blockTableSignal = false;
         }
     }
+    // Energy window edits: recompute Counts; reset rate baseline (windows changed).
+    resetRoiRateBaseline();
+    if (m_hasLastSpectrum) {
+        updateRoiLiveStats(m_lastSpectrum);
+    }
     emitRoisChanged();
+}
+
+void RoiTimeSeriesPanel::clearRoiTableSelection()
+{
+    if (!m_roiTable) {
+        return;
+    }
+    m_roiTable->clearSelection();
+    m_roiTable->setCurrentIndex(QModelIndex());
+}
+
+bool RoiTimeSeriesPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (!m_roiTable || event->type() != QEvent::MouseButtonPress) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // Click on empty area inside the table → deselect row.
+    if (watched == m_roiTable->viewport()) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (!m_roiTable->indexAt(me->pos()).isValid()) {
+            clearRoiTableSelection();
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // Click anywhere outside the table → deselect row (return to neutral look).
+    if (auto *w = qobject_cast<QWidget *>(watched)) {
+        if (w != m_roiTable && w != m_roiTable->viewport() && !m_roiTable->isAncestorOf(w)) {
+            if (m_roiTable->selectionModel() && m_roiTable->selectionModel()->hasSelection()) {
+                clearRoiTableSelection();
+            }
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
 }
 
 void RoiTimeSeriesPanel::onStart()
@@ -452,6 +666,9 @@ void RoiTimeSeriesPanel::onExport()
 
 void RoiTimeSeriesPanel::onSpectrum(const QtRadiacode::RcSpectrum &sp)
 {
+    // Always refresh table Counts / cps from the live spectrum.
+    updateRoiLiveStats(sp);
+
     if (!m_recording) {
         return;
     }

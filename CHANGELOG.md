@@ -1,27 +1,35 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] — 2026-07-28
 
 ### Added
 
 - Device list includes **BLE** scan results alongside USB; Connect uses `connectBle` / `connectUsb`
+- Live: **Battery** (% from Rare DATA_BUF) and **BLE signal** (RSSI dBm; n/a on USB)
+- Periodic DATA_BUF poll for Rare/battery (~1 min + shortly after connect)
+- Live: **Spectrum total counts** (sum of channels on the current spectrum)
+- ROI table columns **Counts** (cumulative in energy window) and **cps** (ΔN/Δt, same as chart while recording)
+- ROI preset **Ag neutron activation** (¹⁰⁸Ag 633 keV, ¹¹⁰Ag 658 keV; optional ¹¹⁰ᵐAg 885/937 keV)
+- QSettings: remember last ROI **preset**, **dwell**, and **Reset spectrum on start**
+- **macOS** packaging (`scripts/package-macos.sh`, app icon, Info.plist); Linux/Windows icons
+
+### Changed
+
 - UI group renamed to **Device** (was “USB device”)
+- ROI controls (preset, table, record) moved next to **Live** (always visible); ROI tab shows chart only
+- **Reset spectrum** / **Save spectrum…** moved from Device bar into the **Live** panel (under Spectrum live time)
+- Live and ROI time series group boxes share the same row height
 
 ### Fixed
 
 - BLE: one command per second + spectrum gating (no queue full spam)
 - BLE ROI: dwell uses wall-clock time (was inflated to ~3× by round-robin)
+- ROI table: click outside clears the highlighted row selection
 
-### Changed
+### Notes
 
-- ROI controls (preset, table, record) moved next to **Live** (always visible); ROI tab shows chart only
-
-### Added
-
-- Live: **Battery** (% from Rare DATA_BUF) and **BLE signal** (RSSI dBm; n/a on USB)
-- Periodic DATA_BUF poll for Rare/battery (~1 min + shortly after connect)
-- ROI preset **Ag neutron activation** (¹⁰⁸Ag 633 keV, ¹¹⁰Ag 658 keV; optional ¹¹⁰ᵐAg 885/937 keV)
-- QSettings: remember last ROI **preset**, **dwell**, and **Reset spectrum on start**
+- Prefer **USB** while Home Assistant holds BLE
+- Library pin for this release: **qtradiacode `v0.1.1`**
 
 ## [0.1.0] — 2026-07-27
 

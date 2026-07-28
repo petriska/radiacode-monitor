@@ -60,14 +60,6 @@ MainWindow::MainWindow(QWidget *parent)
     m_refreshBtn = new QPushButton(tr("Refresh"), this);
     m_connectBtn = new QPushButton(tr("Connect"), this);
     m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
-    m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), this);
-    m_resetSpectrumBtn->setToolTip(
-        tr("Clear the spectrum accumulation on the device.\n"
-           "The plot auto-refreshes about every 2 seconds while connected."));
-    m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
-    m_saveSpectrumBtn->setToolTip(
-        tr("Save the last spectrum as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON.\n"
-           "Includes live time and energy calibration where the format allows."));
     m_refreshBtn->setToolTip(
         tr("Re-scan USB and BLE for Radiacode devices.\n"
            "BLE: device must be free (not held by phone or Home Assistant)."));
@@ -77,14 +69,14 @@ MainWindow::MainWindow(QWidget *parent)
     connLay->addWidget(m_refreshBtn);
     connLay->addWidget(m_connectBtn);
     connLay->addWidget(m_disconnectBtn);
-    connLay->addWidget(m_resetSpectrumBtn);
-    connLay->addWidget(m_saveSpectrumBtn);
     root->addWidget(connBox);
 
-    // Live (left) + ROI controls (right) — visible on Spectrum and ROI tabs.
+    // Live (left) + ROI controls (right) — same height, visible on Spectrum and ROI tabs.
     auto *topRow = new QHBoxLayout;
+
     auto *liveBox = new QGroupBox(tr("Live"), this);
-    auto *form = new QFormLayout(liveBox);
+    auto *liveLay = new QVBoxLayout(liveBox);
+    auto *form = new QFormLayout;
     m_statusLabel = new QLabel(tr("Disconnected"), this);
     m_serialLabel = new QLabel(QStringLiteral("—"), this);
     m_fwLabel = new QLabel(QStringLiteral("—"), this);
@@ -92,6 +84,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_countLabel = new QLabel(QStringLiteral("—"), this);
     m_tempLabel = new QLabel(QStringLiteral("—"), this);
     m_spectrumLiveLabel = new QLabel(QStringLiteral("—"), this);
+    m_spectrumTotalLabel = new QLabel(QStringLiteral("—"), this);
     m_spectrumLiveLabel->setToolTip(
         tr("Live time of the spectrum currently shown (device accumulation clock)."));
     m_batteryLabel = new QLabel(QStringLiteral("—"), this);
@@ -112,13 +105,33 @@ MainWindow::MainWindow(QWidget *parent)
     form->addRow(tr("Battery"), m_batteryLabel);
     form->addRow(tr("BLE signal"), m_signalLabel);
     form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
-    liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    form->addRow(tr("Spectrum Total counts"), m_spectrumTotalLabel);
+
+    m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), this);
+    m_resetSpectrumBtn->setToolTip(
+        tr("Clear the spectrum accumulation on the device.\n"
+           "The plot auto-refreshes about every 2 seconds while connected."));
+    m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
+    m_saveSpectrumBtn->setToolTip(
+        tr("Save the last spectrum as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON.\n"
+           "Includes live time and energy calibration where the format allows."));
+    auto *spectrumActions = new QHBoxLayout;
+    spectrumActions->addWidget(m_resetSpectrumBtn);
+    spectrumActions->addWidget(m_saveSpectrumBtn);
+    spectrumActions->addStretch(1);
+    form->addRow(QString(), spectrumActions);
+
+    liveLay->addLayout(form);
+    liveLay->addStretch(1); // top-align form content when Live is stretched to ROI height
+    // Preferred (not Maximum): HBox stretches both group boxes to the taller height.
+    // Do not pass AlignTop — that prevents vertical stretch and leaves unequal heights.
+    liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     topRow->addWidget(liveBox, 2);
 
     m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
     if (QWidget *roiCtrl = m_roiPanel->controlsWidget()) {
         roiCtrl->setMinimumWidth(360);
-        roiCtrl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+        roiCtrl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         // Reparent into the top row (still owned logically by the panel).
         topRow->addWidget(roiCtrl, 3);
     }
@@ -468,6 +481,7 @@ void MainWindow::onResetSpectrum()
     m_hasSpectrum = false;
     m_lastSpectrum = {};
     m_spectrumLiveLabel->setText(QStringLiteral("—"));
+    m_spectrumTotalLabel->setText(QStringLiteral("—"));
     m_saveSpectrumBtn->setEnabled(false);
     m_spectrumInflight = false;
     m_device->spectrumReset();
@@ -836,6 +850,7 @@ void MainWindow::onDisconnected()
     m_batteryLabel->setText(QStringLiteral("—"));
     m_signalLabel->setText(QStringLiteral("—"));
     m_spectrumLiveLabel->setText(QStringLiteral("—"));
+    m_spectrumTotalLabel->setText(QStringLiteral("—"));
     m_serialLabel->setText(QStringLiteral("—"));
     m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
@@ -957,6 +972,7 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     for (quint32 c : sp.counts) {
         totalCounts += c;
     }
+    m_spectrumTotalLabel->setText(tr("%1").arg(totalCounts));
     // ch = number of energy channels; total = sum of counts; live = accumulation time
     statusBar()->showMessage(
         tr("Spectrum: total %1 counts | %2 channels | live time %3")

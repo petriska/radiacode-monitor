@@ -20,7 +20,7 @@ ManifestDPIAware true
   !define PRODUCT_NAME "RadiaCode Monitor"
 !endif
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.1.0"
+  !define PRODUCT_VERSION "0.2.0"
 !endif
 !ifndef PUBLISHER
   !define PUBLISHER "RadiaCode Monitor contributors"

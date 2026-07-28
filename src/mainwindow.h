@@ -102,6 +102,7 @@ private:
     QLabel *m_batteryLabel = nullptr;
     QLabel *m_signalLabel = nullptr;
     QLabel *m_spectrumLiveLabel = nullptr;
+    QLabel *m_spectrumTotalLabel = nullptr;
     QLabel *m_logLabel = nullptr;
 
     SpectrumWidget *m_spectrum = nullptr;
