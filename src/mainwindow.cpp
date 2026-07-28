@@ -345,6 +345,8 @@ void MainWindow::startBleScan()
             &MainWindow::onBleDeviceFound);
     connect(m_bleScanner, &QtRadiacode::RcBleScanner::finished, this,
             &MainWindow::onBleScanFinished);
+    connect(m_bleScanner, &QtRadiacode::RcBleScanner::errorOccurred, this,
+            [this](const QString &msg) { appendLog(msg); });
 
     m_bleScanActive = true;
     m_bleFoundThisScan = 0;

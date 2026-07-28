@@ -56,8 +56,9 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright (c) ${PUBLISHER}"
 ; Modern UI
 ; ---------------------------------------------------------------------------
 !define MUI_ABORTWARNING
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install-blue.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall-blue.ico"
+; Same app icon as the .exe (relative to this .nsi under installer/)
+!define MUI_ICON "..\icons\radiacode-monitor.ico"
+!define MUI_UNICON "..\icons\radiacode-monitor.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "license.txt"

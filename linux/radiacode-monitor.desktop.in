@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Radiacode Monitor
+GenericName=Radiation monitor
+Comment=USB/BLE monitor for RadiaCode radiation detectors
+Exec=radiacode-monitor
+Icon=radiacode-monitor
+Terminal=false
+Categories=Science;Utility;Qt;
+StartupNotify=true
+Keywords=radiation;spectrum;radiacode;gamma;

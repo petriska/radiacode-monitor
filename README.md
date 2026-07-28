@@ -37,6 +37,21 @@ cmake --build .
 ./radiacode-monitor
 ```
 
+## App icon
+
+Shared artwork (radiation + spectrum):
+
+| Path | Use |
+|------|-----|
+| `icons/radiacode-monitor-1024.png` | Master source |
+| `icons/radiacode-monitor.ico` | Windows `.exe` + NSIS installer |
+| `icons/radiacode-monitor-{16…512}.png` | Linux hicolor theme |
+| `icons/radiacode-monitor.png` | Generic 256×256 |
+| `macos/radiacode-monitor.icns` | macOS Dock / Finder |
+| `resources/app.qrc` | Window / taskbar icon (all platforms via `QIcon`) |
+
+Windows embeds the `.ico` through `windows/radiacode-monitor.rc`. Linux installs a `.desktop` file (`linux/radiacode-monitor.desktop.in`) and hicolor icons on `cmake --install`.
+
 ## Windows installer (NSIS)
 
 After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to the exe):
@@ -66,6 +81,41 @@ This will:
 | `installer/license.txt` | License page in the wizard |
 | `scripts/package-windows.ps1` | Stage + windeployqt + makensis |
 | `dist/` | Output (gitignored) |
+
+## macOS app package
+
+After a **Release** build of the `.app` (Qt Creator kit or CLI):
+
+```bash
+# From the radiacode-monitor repo root
+./scripts/package-macos.sh
+
+# Explicit paths / DMG:
+./scripts/package-macos.sh \
+  --bin-dir build/Qt_6_11_1_for_macOS_Release/bin \
+  --qt-dir "$HOME/Qt/6.11.1/macos" \
+  --version 0.1.0 \
+  --dmg
+```
+
+This will:
+
+1. Copy the built `radiacode-monitor.app` into `dist/stage/`
+2. Run **macdeployqt** (Qt frameworks, plugins, and linked dylibs including QtRadiacode / libusb when found via `-libpath`)
+3. Ad-hoc **codesign** so it runs outside the build tree
+4. Publish **`dist/Radiacode Monitor.app`**
+5. Optionally create **`dist/RadiacodeMonitor-<version>-macos.dmg`** (`--dmg`)
+
+| Path | Role |
+|------|------|
+| `macos/Info.plist.in` | Bundle id, Bluetooth privacy strings, icon |
+| `macos/radiacode-monitor.icns` | Dock / Finder icon |
+| `scripts/package-macos.sh` | Stage + macdeployqt + codesign (+ optional DMG) |
+| `dist/` | Output (gitignored) |
+
+**Run locally:** `open "dist/Radiacode Monitor.app"` or drag to **Applications**.
+
+**Distribution note:** ad-hoc signing is enough on *your* Mac. For other users, Gatekeeper expects an **Apple Developer ID** signature and **notarization** (not automated by this script).
 
 ## GitHub / library pin
 
