@@ -50,28 +50,28 @@ cmake .. -DQTRADIACODE_DIR=/path/to/qtradiacode -DCMAKE_PREFIX_PATH=/path/to/Qt/
 ```
 
 If **no** local `qtradiacode` tree is found, CMake **downloads it automatically**
-via FetchContent (`QTRADIACODE_GIT_TAG`, default `v0.1.2` — needs network + git).
+via FetchContent (`QTRADIACODE_GIT_TAG`, default `v0.1.3` — needs network + git).
 
 ### From GitHub Release ZIP (no git clone)
 
 1. On [qtradiacode Releases](https://github.com/petriska/qtradiacode/releases) download
-   **Source code (zip)** and extract it (folder is usually `qtradiacode-0.1.2` or similar).
+   **Source code (zip)** and extract it (folder is usually `qtradiacode-0.1.3` or similar).
 2. On [radiacode-monitor Releases](https://github.com/petriska/radiacode-monitor/releases)
    download **Source code (zip)** and extract it next to the library.
 3. Point CMake at the library, or rename the library folder to `qtradiacode` as a sibling:
 
 ```text
 parent/
-  qtradiacode/              # or: qtradiacode-0.1.2  (auto-detected)
-  radiacode-monitor-0.2.1/  # extracted app sources
+  qtradiacode/              # or: qtradiacode-0.1.3  (auto-detected)
+  radiacode-monitor-0.2.2/  # extracted app sources
 ```
 
 ```bash
-cd radiacode-monitor-0.2.1   # extracted app folder
+cd radiacode-monitor-0.2.2   # extracted app folder
 mkdir build && cd build
 cmake .. -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
 # if auto-detect fails:
-# cmake .. -DQTRADIACODE_DIR=../qtradiacode-0.1.2 -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
+# cmake .. -DQTRADIACODE_DIR=../qtradiacode-0.1.3 -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
 cmake --build .
 ```
 
@@ -107,7 +107,7 @@ After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to t
 .\scripts\package-windows.ps1 `
   -BuildBinDir .\build\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\bin `
   -QtDir M:\Qt\6.11.1\msvc2022_64 `
-  -Version 0.2.1   # optional; omit to use CMakeLists.txt
+  -Version 0.2.2   # optional; omit to use CMakeLists.txt
 ```
 
 This will:
@@ -161,18 +161,61 @@ This will:
 
 **Distribution note:** ad-hoc signing is enough on *your* Mac. For other users, Gatekeeper expects an **Apple Developer ID** signature and **notarization** (not automated by this script).
 
+## Linux Debian package (`.deb`)
+
+Builds against **system Qt 6** (e.g. Ubuntu 24.04 = Qt 6.4) and packages the app, `libQtRadiacode.so`, desktop entry, icons, and USB **udev** rules.
+
+**Build dependencies (Ubuntu 24.04):**
+
+```bash
+sudo apt install build-essential cmake ninja-build \
+  qt6-base-dev qt6-connectivity-dev libusb-1.0-0-dev \
+  dpkg-dev file
+```
+
+**Package** (repo root; sibling `../qtradiacode` recommended):
+
+```bash
+./scripts/package-deb.sh
+# optional:
+# ./scripts/package-deb.sh --clean
+# ./scripts/package-deb.sh --build-dir build-deb --version 0.2.2
+```
+
+Output: **`dist/radiacode-monitor_<version>_<arch>.deb`**
+
+**Install:**
+
+```bash
+sudo apt install ./dist/radiacode-monitor_*.deb
+# unplug/replug the USB detector after install (postinst reloads udev)
+```
+
+| Path | Role |
+|------|------|
+| `scripts/package-deb.sh` | Release configure (`prefix=/usr`) + build + CPack DEB |
+| `linux/debian/postinst` / `postrm` | Reload udev rules on install/remove |
+| `linux/radiacode-monitor.desktop.in` | Menu entry |
+| CMake `CPack` block | Package metadata + `dpkg-shlibdeps` |
+
+Manual alternative from an existing build configured with `-DCMAKE_INSTALL_PREFIX=/usr`:
+
+```bash
+cd build-deb && cpack -G DEB
+```
+
 ## GitHub / library pin
 
 Private repos:
 
 - App: https://github.com/petriska/radiacode-monitor
-- Library: https://github.com/petriska/qtradiacode (**`v0.1.2`**)
+- Library: https://github.com/petriska/qtradiacode (**`v0.1.3`**)
 
 Local development uses a **sibling** checkout (`../qtradiacode`). For a pinned clone:
 
 ```bash
 git clone https://github.com/petriska/qtradiacode.git
-cd qtradiacode && git checkout v0.1.2
+cd qtradiacode && git checkout v0.1.3
 ```
 
 Or CMake FetchContent (also used automatically if no local tree is found):
@@ -180,7 +223,7 @@ Or CMake FetchContent (also used automatically if no local tree is found):
 ```cmake
 FetchContent_Declare(qtradiacode
   GIT_REPOSITORY https://github.com/petriska/qtradiacode.git
-  GIT_TAG        v0.1.2
+  GIT_TAG        v0.1.3
 )
 ```
 
@@ -219,7 +262,7 @@ Save spectrum as **CSV**, **TKA**, **ANSI N42.42**, or [**NPES-JSON**](https://g
 ## Features (later)
 
 - In-app T½ fit, background ROI
-- Linux AppImage / deb packaging
+- Linux AppImage (optional portable build)
 
 ## Notes
 

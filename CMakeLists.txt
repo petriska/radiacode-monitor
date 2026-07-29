@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(radiacode-monitor VERSION 0.2.1 LANGUAGES CXX)
+project(radiacode-monitor VERSION 0.2.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 
 # QtRadiacode library: sibling checkout, explicit -DQTRADIACODE_DIR=..., or FetchContent.
 # Default pin for automatic download (override with -DQTRADIACODE_GIT_TAG=...).
-set(QTRADIACODE_GIT_TAG "v0.1.2" CACHE STRING
+set(QTRADIACODE_GIT_TAG "v0.1.3" CACHE STRING
   "Git tag/branch for FetchContent when no local qtradiacode tree is found")
 
 set(QTRADIACODE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../qtradiacode"
@@ -127,11 +127,12 @@ set_target_properties(radiacode-monitor PROPERTIES
 )
 unset(_radiacode_app_icon_mac)
 
+include(GNUInstallDirs)
+
 # Linux: install desktop entry + hicolor icons (optional packaging / `cmake --install`)
 if(UNIX AND NOT APPLE)
-  include(GNUInstallDirs)
   set(_desktop_in "${CMAKE_CURRENT_SOURCE_DIR}/linux/radiacode-monitor.desktop.in")
-  set(_desktop_out "${CMAKE_CURRENT_BINARY_DIR}/radiacode-monitor.desktop")
+  set(_desktop_out "${CMAKE_BINARY_DIR}/radiacode-monitor.desktop")
   configure_file("${_desktop_in}" "${_desktop_out}" @ONLY)
   install(FILES "${_desktop_out}"
     DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/applications")
@@ -164,7 +165,73 @@ endif()
 # Deploy QtRadiacode.dll + libusb-1.0.dll next to the .exe (Windows).
 qtradiacode_deploy_runtime(radiacode-monitor)
 
+# Installed binary: no build-tree RUNPATH; libQtRadiacode lives in multiarch libdir
+# (/usr/lib/…) and is found via ldconfig after package install.
+if(UNIX AND NOT APPLE)
+  set_target_properties(radiacode-monitor PROPERTIES
+    INSTALL_RPATH ""
+    BUILD_WITH_INSTALL_RPATH FALSE
+  )
+endif()
+
 install(TARGETS radiacode-monitor
   BUNDLE DESTINATION .
-  RUNTIME DESTINATION bin
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
+
+# Docs inside the package (/usr/share/doc/radiacode-monitor/…)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+  install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+    RENAME copyright
+  )
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY.md")
+  install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY.md"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+  )
+endif()
+
+# ---------------------------------------------------------------------------
+# CPack: Debian package (Linux). Configure with CMAKE_INSTALL_PREFIX=/usr for
+# a normal system layout, then: cpack -G DEB   or   ./scripts/package-deb.sh
+# ---------------------------------------------------------------------------
+if(UNIX AND NOT APPLE)
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_PACKAGE_NAME "radiacode-monitor")
+  set(CPACK_PACKAGE_VENDOR "QtRadiacode contributors")
+  set(CPACK_PACKAGE_CONTACT "Martin Petriska <https://github.com/petriska>")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "USB/BLE desktop monitor for RadiaCode radiation detectors")
+  set(CPACK_PACKAGE_DESCRIPTION
+"Radiacode Monitor is an unofficial Qt 6 desktop app for RadiaCode detectors
+over USB and Bluetooth LE (spectrum, count/dose rate, ROI time series).
+
+Includes the QtRadiacode shared library and udev rules for USB access
+(VID 0483 / PID f123). Not affiliated with the RadiaCode manufacturer.")
+  set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/petriska/radiacode-monitor")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  set(CPACK_PACKAGE_INSTALL_DIRECTORY "${CPACK_PACKAGE_NAME}")
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+  set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+  set(CPACK_STRIP_FILES TRUE)
+
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Martin Petriska <https://github.com/petriska>")
+  set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+  set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
+
+  set(_deb_postinst "${CMAKE_CURRENT_SOURCE_DIR}/linux/debian/postinst")
+  set(_deb_postrm "${CMAKE_CURRENT_SOURCE_DIR}/linux/debian/postrm")
+  if(EXISTS "${_deb_postinst}" AND EXISTS "${_deb_postrm}")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${_deb_postinst};${_deb_postrm}")
+  endif()
+  unset(_deb_postinst)
+  unset(_deb_postrm)
+
+  include(CPack)
+endif()

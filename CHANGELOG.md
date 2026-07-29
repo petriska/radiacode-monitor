@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.2] — 2026-07-29
+
+### Added
+
+- **Debian package** via CPack: `scripts/package-deb.sh` →
+  `dist/radiacode-monitor_<ver>_<arch>.deb` (app + `libQtRadiacode`,
+  desktop/icons, udev rules, docs; `postinst` reloads udev + desktop/icon caches)
+- Desktop entry polish: `StartupWMClass`, Science category (Ubuntu app menu + icon)
+
+### Fixed
+
+- Build against distro **Qt 6.4** (Ubuntu 24.04 LTS): requires **qtradiacode ≥ 0.1.3**
+  (`QPermissions` / `QT_CONFIG(permissions)` guard). macOS with Qt 6.5+ (e.g. 6.11.1)
+  is unaffected — Bluetooth permission plugin + Info.plist strings remain as before.
+
+### Notes
+
+- Library pin for this release: **qtradiacode `v0.1.3`**
+- Linux deb targets Ubuntu 24.04 **amd64** (system Qt 6); install from `/tmp` avoids apt `_apt` notice
+
 ## [0.2.1] — 2026-07-28
 
 ### Added

@@ -7,6 +7,8 @@ Comment=USB/BLE monitor for RadiaCode radiation detectors
 Exec=radiacode-monitor
 Icon=radiacode-monitor
 Terminal=false
-Categories=Science;Utility;Qt;
+Categories=Science;Qt;
+# Matches QApplication name / window class so the dock keeps the right icon.
+StartupWMClass=radiacode-monitor
 StartupNotify=true
-Keywords=radiation;spectrum;radiacode;gamma;
+Keywords=radiation;spectrum;radiacode;gamma;dosimetry;
