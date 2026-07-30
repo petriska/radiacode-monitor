@@ -1,4 +1,5 @@
-# radiacode-monitor
+# RadiaCode monitor
+<img width="1283" height="803" alt="GUI" src="https://github.com/user-attachments/assets/a8f0fbe1-f7e4-4a53-af76-9bcae297eae6" />
 
 Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) detectors using the **QtRadiacode** library.
 
@@ -17,6 +18,8 @@ Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) 
   - Presets (e.g. radon daughters ²¹⁴Pb / ²¹⁴Bi) or **custom ROIs** (add/edit/remove)
   - Dwell sampling, **t₀** marker, multi-curve chart, **CSV export**
 - Temperature / charge when present in DATA_BUF
+- Save energy spectrum in .csv, .tka, .n42 (Interspec), .json (GammaMCA)
+- Win, Mac, Linux versions
 
 ## Dependencies
 
