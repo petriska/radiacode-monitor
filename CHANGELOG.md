@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Acquisition run** (Live panel): stop by **device live time (s)** or **total
+  spectrum counts**, Start/Stop, horizontal progress bar + detail text.
+  Stop is evaluated after each full spectrum (± one poll frame).
+- Acquisition start when spectrum has data: dialog **Continue…** (keep
+  accumulation) / **Save…** / **Reset and start** / **Cancel** — no separate
+  reset checkbox.
+- **Background / Net spectrum**: **Use as background**, **Clear BG**, view
+  combo Live / Background / Net (Live − BG scaled by live-time ratio;
+  negative bins → 0). Save exports the currently selected view.
+- **Spectrum waterfall** (under spectrum plot): time × channel count-rate
+  (ΔN/Δt between snapshots), SDR-style colors, newest row at bottom; X range
+  follows spectrum zoom/pan. Hover cursor: energy/channel, cps, ΔN, device
+  live time, age from newest (`t−Ns`), wall clock. Spectrum ↔ waterfall
+  cursors are cross-linked (same channel highlighted on both).
+- **UI layout** (1080p-friendly): Device bar moved next to Live (above ROI
+  controls); Live form drops Serial/Firmware/Dose rate (serial/FW on Device
+  row; dose still updated internally); Messages/log panel removed (status bar only).
+
 ## [0.2.2] — 2026-07-29
 
 ### Added

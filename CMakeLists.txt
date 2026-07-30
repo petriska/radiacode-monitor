@@ -62,8 +62,12 @@ set(_radiacode_monitor_sources
   src/main.cpp
   src/mainwindow.h
   src/mainwindow.cpp
+  src/acquisition/acquisitioncontroller.h
+  src/acquisition/acquisitioncontroller.cpp
   src/spectrumwidget.h
   src/spectrumwidget.cpp
+  src/spectrumwaterfall.h
+  src/spectrumwaterfall.cpp
   src/spectrumexport.h
   src/spectrumexport.cpp
   src/roitimeseries/roimath.h
