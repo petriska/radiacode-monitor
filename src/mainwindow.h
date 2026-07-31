@@ -38,9 +38,9 @@ private slots:
     void onAcquisitionStart();
     void onAcquisitionStop();
     void onAcquisitionModeChanged();
-    void onUseAsBackground();
-    void onClearBackground();
+    void onLoadBackground();
     void onSpectrumViewChanged();
+    bool loadBackgroundFromFile(const QString &path);
 
     void onConnected();
     void onDisconnected();
@@ -118,8 +118,8 @@ private:
     QPushButton *m_resetSpectrumBtn = nullptr;
     QPushButton *m_saveSpectrumBtn = nullptr;
     QComboBox *m_spectrumViewCombo = nullptr;
-    QPushButton *m_useAsBgBtn = nullptr;
-    QPushButton *m_clearBgBtn = nullptr;
+    QPushButton *m_loadBgBtn = nullptr;
+    QSpinBox *m_waterfallIntegrateSpin = nullptr;
     QLabel *m_bgStatusLabel = nullptr;
     QAction *m_saveSpectrumAct = nullptr;
     QAction *m_exportRoiCsvAct = nullptr;

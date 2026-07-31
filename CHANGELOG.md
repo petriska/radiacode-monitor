@@ -10,9 +10,12 @@
 - Acquisition start when spectrum has data: dialog **Continue…** (keep
   accumulation) / **Save…** / **Reset and start** / **Cancel** — no separate
   reset checkbox.
-- **Background / Net spectrum**: **Use as background**, **Clear BG**, view
-  combo Live / Background / Net (Live − BG scaled by live-time ratio;
-  negative bins → 0). Save exports the currently selected view.
+- **Background / Net spectrum**: **Load BG…** opens file dialog (CSV/TKA/N42/NPES-JSON);
+  view combo Live / Background / Net enabled only after BG is loaded
+  (grayed out otherwise). Workflow: Save spectrum → Load BG → Net.
+  Waterfall follows **Live** / **Net** view (rebuilds rates from stored snapshots).
+- Waterfall **integrate**: each display row covers N spectrum polls (1…32);
+  longer history (~N×), coarser time; control under View, saved in QSettings.
 - **Spectrum waterfall** (under spectrum plot): time × channel count-rate
   (ΔN/Δt between snapshots), SDR-style colors, newest row at bottom; X range
   follows spectrum zoom/pan. Hover cursor: energy/channel, cps, ΔN, device

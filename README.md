@@ -14,8 +14,8 @@ Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) 
   - **Wheel**: zoom X · **Drag**: pan · **Double-click**: reset view
   - **Cursor**: vertical line with energy (keV), channel, and counts
 - **Acquisition run**: stop by live time (s) or total counts; on start with existing data choose Continue / Save / Reset
-- **Background / Net**: store live spectrum as BG; view Live, Background, or Net (time-scaled subtraction)
-- **Waterfall** under spectrum: count-rate vs time (ΔN/Δt), follows X zoom
+- **Background / Net**: **Load BG** from CSV/TKA/N42/NPES-JSON (view modes unlock after load)
+- **Waterfall** under spectrum: count-rate vs time (ΔN/Δt), follows X zoom; integrate N polls per row
 - **ROI time series** tab — universal energy-window rates vs time
   - Presets (e.g. radon daughters ²¹⁴Pb / ²¹⁴Bi) or **custom ROIs** (add/edit/remove)
   - Dwell sampling, **t₀** marker, multi-curve chart, **CSV export**

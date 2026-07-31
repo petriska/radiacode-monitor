@@ -139,26 +139,35 @@ MainWindow::MainWindow(QWidget *parent)
     m_spectrumViewCombo->addItem(tr("Background"), int(SpectrumView::Background));
     m_spectrumViewCombo->addItem(tr("Net (Live − BG)"), int(SpectrumView::Net));
     m_spectrumViewCombo->setToolTip(
-        tr("What the spectrum plot shows.\n"
+        tr("What the spectrum plot shows (enabled after a background is loaded).\n"
            "Live: current device spectrum.\n"
-           "Background: stored BG (does not change with live updates).\n"
-           "Net: Live − BG scaled by live-time ratio (negative bins → 0)."));
-    m_useAsBgBtn = new QPushButton(tr("Use as BG"), this);
-    m_useAsBgBtn->setToolTip(
-        tr("Store the current live spectrum as background for Net view.\n"
-           "Does not change the device."));
-    m_clearBgBtn = new QPushButton(tr("Clear BG"), this);
-    m_clearBgBtn->setToolTip(tr("Remove the stored background from the app."));
-    m_bgStatusLabel = new QLabel(tr("BG: none"), this);
+           "Background: loaded BG spectrum.\n"
+           "Net: Live − BG scaled by live-time ratio (negative bins → 0).\n\n"
+           "Workflow: Save spectrum → Load BG… → choose Background or Net."));
+    m_spectrumViewCombo->setEnabled(false);
+    m_loadBgBtn = new QPushButton(tr("Load BG…"), this);
+    m_loadBgBtn->setToolTip(
+        tr("Load a background spectrum from file (CSV, TKA, N42, NPES-JSON).\n"
+           "Save a spectrum first if you want to reuse a measurement as BG."));
+    m_bgStatusLabel = new QLabel(tr("BG: none — Load BG… to enable view modes"), this);
     m_bgStatusLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
     m_bgStatusLabel->setWordWrap(true);
     auto *bgRow = new QHBoxLayout;
     bgRow->setSpacing(6);
     bgRow->addWidget(m_spectrumViewCombo, 1);
-    bgRow->addWidget(m_useAsBgBtn);
-    bgRow->addWidget(m_clearBgBtn);
+    bgRow->addWidget(m_loadBgBtn);
     form->addRow(tr("View"), bgRow);
     form->addRow(QString(), m_bgStatusLabel);
+
+    m_waterfallIntegrateSpin = new QSpinBox(this);
+    m_waterfallIntegrateSpin->setRange(1, 32);
+    m_waterfallIntegrateSpin->setValue(1);
+    m_waterfallIntegrateSpin->setSuffix(tr(" polls"));
+    m_waterfallIntegrateSpin->setToolTip(
+        tr("Waterfall integrate: each display row sums N spectrum updates.\n"
+           "1 = every poll (~8 min history at full buffer).\n"
+           "2 ≈ 16 min, 4 ≈ 32 min, … — coarser time, longer history."));
+    form->addRow(tr("Waterfall integrate"), m_waterfallIntegrateSpin);
 
     liveLay->addLayout(form);
 
@@ -418,10 +427,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
     connect(m_resetSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onResetSpectrum);
     connect(m_saveSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onSaveSpectrum);
-    connect(m_useAsBgBtn, &QPushButton::clicked, this, &MainWindow::onUseAsBackground);
-    connect(m_clearBgBtn, &QPushButton::clicked, this, &MainWindow::onClearBackground);
+    connect(m_loadBgBtn, &QPushButton::clicked, this, &MainWindow::onLoadBackground);
     connect(m_spectrumViewCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &MainWindow::onSpectrumViewChanged);
+    connect(m_waterfallIntegrateSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int n) {
+        if (m_waterfall) {
+            m_waterfall->setIntegrateCount(n);
+        }
+        QSettings().setValue(QStringLiteral("waterfall/integrate"), n);
+    });
     connect(m_acqStartBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStart);
     connect(m_acqStopBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStop);
     connect(m_acqModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -474,6 +489,19 @@ MainWindow::MainWindow(QWidget *parent)
     setConnectedUi(false);
     updateAcquisitionUi();
     updateBackgroundUi();
+    {
+        QSettings settings;
+        const int integ = settings.value(QStringLiteral("waterfall/integrate"), 1).toInt();
+        if (m_waterfallIntegrateSpin) {
+            const QSignalBlocker blocker(m_waterfallIntegrateSpin);
+            m_waterfallIntegrateSpin->setValue(qBound(1, integ, 32));
+        }
+        if (m_waterfall) {
+            m_waterfall->setIntegrateCount(m_waterfallIntegrateSpin
+                                               ? m_waterfallIntegrateSpin->value()
+                                               : 1);
+        }
+    }
     refreshDeviceList();
 }
 
@@ -786,6 +814,11 @@ void MainWindow::onResetSpectrum()
     m_spectrum->clear();
     if (m_waterfall) {
         m_waterfall->clear();
+        // Keep BG on waterfall if loaded (history restarts empty after reset).
+        if (m_hasBackground) {
+            m_waterfall->setBackground(m_backgroundSpectrum.counts,
+                                       m_backgroundSpectrum.durationSec);
+        }
     }
     m_hasSpectrum = false;
     m_lastSpectrum = {};
@@ -1302,7 +1335,7 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     if (m_acquisition) {
         m_acquisition->onSpectrum(sp);
     }
-    // Waterfall always tracks the live device spectrum (rate ΔN/Δt), not BG/Net view.
+    // Waterfall stores live snapshots; display follows Live/Net view (Net uses BG).
     if (m_waterfall) {
         m_waterfall->setCalibration(sp.a0, sp.a1, sp.a2);
         m_waterfall->pushSpectrum(sp.counts, sp.durationSec);
@@ -1322,44 +1355,77 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     }
 }
 
-void MainWindow::onUseAsBackground()
+bool MainWindow::loadBackgroundFromFile(const QString &path)
 {
-    if (!m_hasSpectrum || m_lastSpectrum.counts.isEmpty()) {
-        appendLog(tr("No live spectrum to use as background."));
-        return;
+    QtRadiacode::RcSpectrum sp;
+    const QString err = SpectrumExport::readSpectrumFile(path, &sp);
+    if (!err.isEmpty()) {
+        appendLog(tr("Load BG failed: %1").arg(err));
+        QMessageBox::warning(this, tr("Load background"), err);
+        return false;
     }
-    m_backgroundSpectrum = m_lastSpectrum;
+    if (sp.counts.isEmpty()) {
+        appendLog(tr("Load BG failed: spectrum has no channels."));
+        return false;
+    }
+    m_backgroundSpectrum = sp;
     m_hasBackground = true;
+    if (m_waterfall) {
+        m_waterfall->setBackground(sp.counts, sp.durationSec);
+    }
     const quint64 n = spectrumTotalCounts(m_backgroundSpectrum);
-    appendLog(tr("Background stored: live time %1, total counts %2")
+    appendLog(tr("Background loaded from %1 — live time %2, total counts %3, %4 ch")
+                  .arg(QFileInfo(path).fileName())
                   .arg(formatDuration(m_backgroundSpectrum.durationSec))
-                  .arg(n));
+                  .arg(n)
+                  .arg(m_backgroundSpectrum.counts.size()));
     updateBackgroundUi();
     refreshSpectrumDisplay();
+    // If already on Net, rebuild waterfall in net mode with new BG.
+    onSpectrumViewChanged();
+    return true;
 }
 
-void MainWindow::onClearBackground()
+void MainWindow::onLoadBackground()
 {
-    if (!m_hasBackground) {
+    QSettings settings;
+    const QString lastDir = settings
+                                .value(QStringLiteral("spectrumExport/dir"),
+                                       QStandardPaths::writableLocation(
+                                           QStandardPaths::DocumentsLocation))
+                                .toString();
+    const QString startDir =
+        QDir(lastDir).exists()
+            ? lastDir
+            : QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Load background spectrum"),
+        startDir,
+        SpectrumExport::openFormatFilterString());
+    if (path.isEmpty()) {
         return;
     }
-    m_backgroundSpectrum = {};
-    m_hasBackground = false;
-    appendLog(tr("Background cleared."));
-    // If viewing BG or Net, fall back to Live.
-    if (m_spectrumViewCombo) {
-        const auto view =
-            static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt());
-        if (view != SpectrumView::Live) {
-            m_spectrumViewCombo->setCurrentIndex(0);
-        }
-    }
-    updateBackgroundUi();
-    refreshSpectrumDisplay();
+
+    settings.setValue(QStringLiteral("spectrumExport/dir"),
+                      QFileInfo(path).absolutePath());
+    loadBackgroundFromFile(path);
 }
 
 void MainWindow::onSpectrumViewChanged()
 {
+    // Waterfall follows Live vs Net; Background view keeps last waterfall mode (usually Live).
+    if (m_waterfall && m_spectrumViewCombo) {
+        const auto view =
+            static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt());
+        if (view == SpectrumView::Net) {
+            m_waterfall->setDisplayMode(SpectrumWaterfall::DisplayMode::Net);
+        } else {
+            // Live or Background → show Live rates in waterfall
+            m_waterfall->setDisplayMode(SpectrumWaterfall::DisplayMode::Live);
+        }
+    }
     refreshSpectrumDisplay();
     updateBackgroundUi();
 }
@@ -1447,31 +1513,27 @@ void MainWindow::refreshSpectrumDisplay()
 
 void MainWindow::updateBackgroundUi()
 {
-    if (m_useAsBgBtn) {
-        m_useAsBgBtn->setEnabled(m_hasSpectrum);
+    if (m_loadBgBtn) {
+        m_loadBgBtn->setEnabled(true);
     }
-    if (m_clearBgBtn) {
-        m_clearBgBtn->setEnabled(m_hasBackground);
+    // View modes (Background / Net) only make sense after a BG is loaded.
+    if (m_spectrumViewCombo) {
+        m_spectrumViewCombo->setEnabled(m_hasBackground);
+        if (!m_hasBackground && m_spectrumViewCombo->currentIndex() != 0) {
+            // Force Live without treating it as a user selection loop.
+            const QSignalBlocker blocker(m_spectrumViewCombo);
+            m_spectrumViewCombo->setCurrentIndex(0);
+        }
     }
     if (m_bgStatusLabel) {
         if (!m_hasBackground) {
-            m_bgStatusLabel->setText(tr("BG: none"));
+            m_bgStatusLabel->setText(tr("BG: none — Load BG… to enable view modes"));
         } else {
             m_bgStatusLabel->setText(
-                tr("BG: live time %1 · total counts %2")
+                tr("BG: live time %1 · total counts %2 · %3 ch")
                     .arg(formatDuration(m_backgroundSpectrum.durationSec))
-                    .arg(spectrumTotalCounts(m_backgroundSpectrum)));
-        }
-    }
-    // Net without BG is misleading — keep combo enabled but tooltip via status.
-    if (m_spectrumViewCombo) {
-        const auto view =
-            static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt());
-        if (view == SpectrumView::Net && !m_hasBackground) {
-            m_bgStatusLabel->setText(
-                tr("BG: none — Net shows Live until you store a background"));
-        } else if (view == SpectrumView::Background && !m_hasBackground) {
-            m_bgStatusLabel->setText(tr("BG: none — store a background first"));
+                    .arg(spectrumTotalCounts(m_backgroundSpectrum))
+                    .arg(m_backgroundSpectrum.counts.size()));
         }
     }
 }

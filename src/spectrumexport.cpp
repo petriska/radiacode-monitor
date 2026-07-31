@@ -4,11 +4,15 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <QUuid>
+#include <QXmlStreamReader>
 
 namespace SpectrumExport {
 
@@ -415,6 +419,419 @@ QString writeSpectrumFile(
     if (!ok) {
         return QStringLiteral("Failed to write spectrum data");
     }
+    return {};
+}
+
+namespace {
+
+quint32 parseDurationPtSeconds(const QString &pt)
+{
+    // PT123S or PT1H2M3S (we mainly write PT%nS).
+    static const QRegularExpression re(
+        QStringLiteral(R"(PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto m = re.match(pt.trimmed());
+    if (!m.hasMatch()) {
+        bool ok = false;
+        const quint32 v = pt.trimmed().toUInt(&ok);
+        return ok ? v : 0u;
+    }
+    const quint32 h = m.captured(1).isEmpty() ? 0u : m.captured(1).toUInt();
+    const quint32 min = m.captured(2).isEmpty() ? 0u : m.captured(2).toUInt();
+    const double sec = m.captured(3).isEmpty() ? 0.0 : m.captured(3).toDouble();
+    return h * 3600u + min * 60u + static_cast<quint32>(sec + 0.5);
+}
+
+bool parseCsv(const QString &text, QtRadiacode::RcSpectrum *out, QString *err)
+{
+    QtRadiacode::RcSpectrum sp;
+    QVector<quint32> counts;
+    const QStringList lines = text.split(QRegularExpression(QStringLiteral("[\r\n]+")),
+                                         Qt::SkipEmptyParts);
+    bool inData = false;
+    for (QString line : lines) {
+        line = line.trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.startsWith(QLatin1Char('#'))) {
+            // # live_time_sec=123
+            // # calib_a0=...
+            const QString body = line.mid(1).trimmed();
+            const int eq = body.indexOf(QLatin1Char('='));
+            if (eq <= 0) {
+                continue;
+            }
+            const QString key = body.left(eq).trimmed().toLower();
+            const QString val = body.mid(eq + 1).trimmed();
+            bool ok = false;
+            if (key == QLatin1String("live_time_sec") || key == QLatin1String("livetime")
+                || key == QLatin1String("live_time")) {
+                sp.durationSec = val.toUInt(&ok);
+            } else if (key == QLatin1String("calib_a0") || key == QLatin1String("a0")) {
+                sp.a0 = val.toFloat(&ok);
+            } else if (key == QLatin1String("calib_a1") || key == QLatin1String("a1")) {
+                sp.a1 = val.toFloat(&ok);
+            } else if (key == QLatin1String("calib_a2") || key == QLatin1String("a2")) {
+                sp.a2 = val.toFloat(&ok);
+            }
+            continue;
+        }
+        if (line.startsWith(QLatin1String("channel"), Qt::CaseInsensitive)) {
+            inData = true;
+            continue;
+        }
+        // channel,counts[,energy]
+        const QStringList parts = line.split(QLatin1Char(','));
+        if (parts.size() < 2) {
+            if (err) {
+                *err = QStringLiteral("CSV: expected channel,counts on line: %1").arg(line);
+            }
+            return false;
+        }
+        bool okCh = false;
+        bool okC = false;
+        const int ch = parts.at(0).trimmed().toInt(&okCh);
+        const quint32 c = parts.at(1).trimmed().toUInt(&okC);
+        if (!okCh || !okC || ch < 0) {
+            if (err) {
+                *err = QStringLiteral("CSV: bad channel/counts: %1").arg(line);
+            }
+            return false;
+        }
+        if (ch >= counts.size()) {
+            counts.resize(ch + 1);
+        }
+        counts[ch] = c;
+        inData = true;
+        Q_UNUSED(inData);
+    }
+    if (counts.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("CSV: no channel data found");
+        }
+        return false;
+    }
+    sp.counts = counts;
+    *out = sp;
+    return true;
+}
+
+bool parseTka(const QString &text, QtRadiacode::RcSpectrum *out, QString *err)
+{
+    const QStringList lines = text.split(QRegularExpression(QStringLiteral("[\r\n]+")),
+                                         Qt::SkipEmptyParts);
+    if (lines.size() < 3) {
+        if (err) {
+            *err = QStringLiteral("TKA: need live time, real time, and channel counts");
+        }
+        return false;
+    }
+    bool okLive = false;
+    bool okReal = false;
+    const double live = lines.at(0).trimmed().toDouble(&okLive);
+    lines.at(1).trimmed().toDouble(&okReal); // real time — ignore value
+    if (!okLive || !okReal) {
+        if (err) {
+            *err = QStringLiteral("TKA: invalid live/real time header");
+        }
+        return false;
+    }
+    QtRadiacode::RcSpectrum sp;
+    sp.durationSec = live > 0.0 ? static_cast<quint32>(live + 0.5) : 0u;
+    sp.counts.reserve(lines.size() - 2);
+    for (int i = 2; i < lines.size(); ++i) {
+        bool ok = false;
+        const quint32 c = lines.at(i).trimmed().toUInt(&ok);
+        if (!ok) {
+            if (err) {
+                *err = QStringLiteral("TKA: bad count on line %1").arg(i + 1);
+            }
+            return false;
+        }
+        sp.counts.append(c);
+    }
+    if (sp.counts.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("TKA: no channels");
+        }
+        return false;
+    }
+    // TKA has no energy calibration — leave a0/a1/a2 at 0.
+    *out = sp;
+    return true;
+}
+
+bool parseN42(const QString &text, QtRadiacode::RcSpectrum *out, QString *err)
+{
+    QXmlStreamReader xml(text);
+    QtRadiacode::RcSpectrum sp;
+    QString channelData;
+    QString coeffText;
+    QString livePt;
+
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (!xml.isStartElement()) {
+            continue;
+        }
+        const QStringView name = xml.name();
+        if (name == QLatin1String("LiveTimeDuration")
+            || name == QLatin1String("RealTimeDuration")) {
+            if (livePt.isEmpty() || name == QLatin1String("LiveTimeDuration")) {
+                livePt = xml.readElementText().trimmed();
+            }
+        } else if (name == QLatin1String("CoefficientValues")) {
+            coeffText = xml.readElementText().trimmed();
+        } else if (name == QLatin1String("ChannelData")) {
+            channelData = xml.readElementText().trimmed();
+        }
+    }
+    if (xml.hasError()) {
+        if (err) {
+            *err = QStringLiteral("N42 XML: %1").arg(xml.errorString());
+        }
+        return false;
+    }
+    if (channelData.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("N42: ChannelData not found");
+        }
+        return false;
+    }
+
+    const QStringList toks =
+        channelData.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    sp.counts.reserve(toks.size());
+    for (const QString &t : toks) {
+        bool ok = false;
+        const quint32 c = t.toUInt(&ok);
+        if (!ok) {
+            if (err) {
+                *err = QStringLiteral("N42: bad channel count '%1'").arg(t);
+            }
+            return false;
+        }
+        sp.counts.append(c);
+    }
+    if (sp.counts.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("N42: empty ChannelData");
+        }
+        return false;
+    }
+
+    if (!livePt.isEmpty()) {
+        sp.durationSec = parseDurationPtSeconds(livePt);
+    }
+
+    if (!coeffText.isEmpty()) {
+        const QStringList c =
+            coeffText.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+        if (c.size() >= 1) {
+            sp.a0 = c.at(0).toFloat();
+        }
+        if (c.size() >= 2) {
+            sp.a1 = c.at(1).toFloat();
+        }
+        if (c.size() >= 3) {
+            sp.a2 = c.at(2).toFloat();
+        }
+    }
+
+    *out = sp;
+    return true;
+}
+
+bool parseNpes(const QByteArray &raw, QtRadiacode::RcSpectrum *out, QString *err)
+{
+    QJsonParseError pe {};
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+        if (err) {
+            *err = QStringLiteral("NPES-JSON: parse error: %1").arg(pe.errorString());
+        }
+        return false;
+    }
+    const QJsonObject root = doc.object();
+    const QJsonArray data = root.value(QStringLiteral("data")).toArray();
+    if (data.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("NPES-JSON: data[] empty");
+        }
+        return false;
+    }
+    const QJsonObject package = data.at(0).toObject();
+    const QJsonObject result = package.value(QStringLiteral("resultData")).toObject();
+    QJsonObject energySpectrum = result.value(QStringLiteral("energySpectrum")).toObject();
+    // Some files nest under first result only — already handled.
+    if (energySpectrum.isEmpty()) {
+        // Fallback: energySpectrum at package root (non-standard).
+        energySpectrum = package.value(QStringLiteral("energySpectrum")).toObject();
+    }
+    if (energySpectrum.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("NPES-JSON: energySpectrum not found");
+        }
+        return false;
+    }
+
+    QtRadiacode::RcSpectrum sp;
+    const QJsonArray spectrumArr = energySpectrum.value(QStringLiteral("spectrum")).toArray();
+    if (spectrumArr.isEmpty()) {
+        if (err) {
+            *err = QStringLiteral("NPES-JSON: spectrum array empty");
+        }
+        return false;
+    }
+    sp.counts.reserve(spectrumArr.size());
+    for (const QJsonValue &v : spectrumArr) {
+        sp.counts.append(static_cast<quint32>(v.toVariant().toULongLong()));
+    }
+
+    const int meas = energySpectrum.value(QStringLiteral("measurementTime")).toInt(0);
+    if (meas > 0) {
+        sp.durationSec = static_cast<quint32>(meas);
+    }
+
+    const QJsonObject cal =
+        energySpectrum.value(QStringLiteral("energyCalibration")).toObject();
+    const QJsonArray coeffs = cal.value(QStringLiteral("coefficients")).toArray();
+    if (coeffs.size() >= 1) {
+        sp.a0 = static_cast<float>(coeffs.at(0).toDouble());
+    }
+    if (coeffs.size() >= 2) {
+        sp.a1 = static_cast<float>(coeffs.at(1).toDouble());
+    }
+    if (coeffs.size() >= 3) {
+        sp.a2 = static_cast<float>(coeffs.at(2).toDouble());
+    }
+
+    *out = sp;
+    return true;
+}
+
+Format guessFormatFromContent(const QByteArray &raw)
+{
+    const QByteArray trimmed = raw.trimmed();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        return Format::Npes;
+    }
+    if (trimmed.startsWith("<?xml") || trimmed.contains("<RadInstrumentData")
+        || trimmed.contains("<ChannelData")) {
+        return Format::N42;
+    }
+    const QString head = QString::fromUtf8(trimmed.left(512));
+    if (head.contains(QLatin1String("channel,counts"), Qt::CaseInsensitive)
+        || head.contains(QLatin1String("# format=csv"))
+        || head.contains(QLatin1String("calib_a0"))) {
+        return Format::Csv;
+    }
+    // Default numeric dump → TKA
+    return Format::Tka;
+}
+
+} // namespace
+
+QString openFormatFilterString()
+{
+    return QStringLiteral(
+        "Spectrum files (*.csv *.tka *.n42 *.json);;"
+        "CSV (*.csv);;"
+        "TKA spectrum (*.tka);;"
+        "ANSI N42.42 (*.n42);;"
+        "NPES-JSON (*.json);;"
+        "All files (*)");
+}
+
+Format formatFromPath(const QString &path)
+{
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == QLatin1String("tka")) {
+        return Format::Tka;
+    }
+    if (ext == QLatin1String("n42") || ext == QLatin1String("xml")) {
+        return Format::N42;
+    }
+    if (ext == QLatin1String("json")) {
+        return Format::Npes;
+    }
+    if (ext == QLatin1String("csv")) {
+        return Format::Csv;
+    }
+    return Format::Csv;
+}
+
+QString readSpectrumFile(const QString &path, QtRadiacode::RcSpectrum *out)
+{
+    if (!out) {
+        return QStringLiteral("Internal error: null spectrum output");
+    }
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return QStringLiteral("Cannot read file: %1").arg(path);
+    }
+    const QByteArray raw = f.readAll();
+    f.close();
+    if (raw.isEmpty()) {
+        return QStringLiteral("File is empty: %1").arg(path);
+    }
+
+    Format format = formatFromPath(path);
+    // Unknown / wrong extension: sniff content.
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext.isEmpty() || ext == QLatin1String("txt") || ext == QLatin1String("dat")
+        || (ext != QLatin1String("csv") && ext != QLatin1String("tka")
+            && ext != QLatin1String("n42") && ext != QLatin1String("json")
+            && ext != QLatin1String("xml"))) {
+        format = guessFormatFromContent(raw);
+    }
+
+    QtRadiacode::RcSpectrum sp;
+    QString err;
+    bool ok = false;
+    switch (format) {
+    case Format::Csv:
+        ok = parseCsv(QString::fromUtf8(raw), &sp, &err);
+        break;
+    case Format::Tka:
+        ok = parseTka(QString::fromUtf8(raw), &sp, &err);
+        break;
+    case Format::N42:
+        ok = parseN42(QString::fromUtf8(raw), &sp, &err);
+        break;
+    case Format::Npes:
+        ok = parseNpes(raw, &sp, &err);
+        break;
+    }
+
+    // If extension-based parse failed, try content sniff once.
+    if (!ok) {
+        const Format guess = guessFormatFromContent(raw);
+        if (guess != format) {
+            err.clear();
+            switch (guess) {
+            case Format::Csv:
+                ok = parseCsv(QString::fromUtf8(raw), &sp, &err);
+                break;
+            case Format::Tka:
+                ok = parseTka(QString::fromUtf8(raw), &sp, &err);
+                break;
+            case Format::N42:
+                ok = parseN42(QString::fromUtf8(raw), &sp, &err);
+                break;
+            case Format::Npes:
+                ok = parseNpes(raw, &sp, &err);
+                break;
+            }
+        }
+    }
+
+    if (!ok) {
+        return err.isEmpty() ? QStringLiteral("Failed to parse spectrum file") : err;
+    }
+    *out = sp;
     return {};
 }
 

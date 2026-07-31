@@ -6,11 +6,14 @@
 #include <QWidget>
 
 // Time × energy waterfall under the spectrum (SDR-style).
-// Each row is count-rate per channel since the previous spectrum (ΔN / Δt).
+// Stores live spectrum snapshots; display mode Live or Net (Live − BG) rebuilds rate rows.
 // Newest row at the bottom; older rows scroll upward.
 class SpectrumWaterfall : public QWidget {
     Q_OBJECT
 public:
+    enum class DisplayMode { Live, Net };
+    Q_ENUM(DisplayMode)
+
     explicit SpectrumWaterfall(QWidget *parent = nullptr);
 
     /// Visible channel range [xMin, xMax) — typically mirrored from SpectrumWidget zoom.
@@ -19,6 +22,19 @@ public:
 
     /// Push a live cumulative spectrum snapshot (device accumulation).
     void pushSpectrum(const QVector<quint32> &counts, quint32 durationSec);
+
+    /// Background for Net mode (empty counts = no BG / force Live display).
+    void setBackground(const QVector<quint32> &counts, quint32 durationSec);
+    void clearBackground();
+
+    /// Live vs Net waterfall (Net requires a background).
+    void setDisplayMode(DisplayMode mode);
+    DisplayMode displayMode() const { return m_mode; }
+
+    /// Each display row covers this many spectrum polls (1 = every poll).
+    /// Higher values lengthen history (~N×) with coarser time resolution.
+    void setIntegrateCount(int n);
+    int integrateCount() const { return m_integrate; }
 
     void clear();
     void setMaxRows(int rows);
@@ -41,12 +57,18 @@ protected:
     void leaveEvent(QEvent *event) override;
 
 private:
+    struct Snapshot {
+        QVector<quint32> counts;
+        quint32 durationSec = 0;
+        QDateTime wallTime;
+    };
+
     struct Row {
         QVector<float> rates;       // cps per channel
-        QVector<quint32> deltas;    // ΔN per channel
+        QVector<quint32> deltas;    // ΔN per channel (live or net)
         quint32 liveTimeSec = 0;    // device durationSec at end of interval
         quint32 intervalSec = 0;    // Δt for this row
-        QDateTime wallTime;         // host clock when row was added
+        QDateTime wallTime;
     };
 
     QRect plotRect() const;
@@ -54,28 +76,34 @@ private:
     double channelToEnergy(double channel) const;
     QRgb rateToColor(float rate) const;
     void rebuildImage();
-    void appendRow(Row &&row);
+    void rebuildRowsFromSnapshots();
+    QVector<quint32> netCountsFor(const Snapshot &snap) const;
     void clearCursor();
     void setCursorFromPos(const QPoint &pos);
-    /// Map widget Y in plot → row index in m_rows, or -1.
     int rowAtPlotY(int y, const QRect &plot) const;
     double channelAtPlotX(int x, const QRect &plot) const;
     int ageFromNewestSec(int rowIndex) const;
     void drawCursor(QPainter &p, const QRect &plot) const;
+    bool netModeActive() const;
 
     static constexpr int kMarginLeft = 64;
     static constexpr int kMarginRight = 14;
     static constexpr int kMarginTop = 4;
     static constexpr int kMarginBottom = 22;
     static constexpr int kDefaultMaxRows = 240;
+    static constexpr int kMaxIntegrate = 32;
 
-    QVector<Row> m_rows; // newest at back
+    int maxSnaps() const { return m_maxRows * m_integrate + 1; }
+
+    QVector<Snapshot> m_snaps; // newest at back (includes first baseline snap)
+    QVector<Row> m_rows;       // rate rows (integrate bins)
     int m_maxRows = kDefaultMaxRows;
+    int m_integrate = 1; // polls per display row
     int m_channels = 0;
 
-    QVector<quint32> m_prevCounts;
-    quint32 m_prevDurationSec = 0;
-    bool m_havePrev = false;
+    DisplayMode m_mode = DisplayMode::Live;
+    QVector<quint32> m_bgCounts;
+    quint32 m_bgDurationSec = 0;
 
     double m_xMin = 0;
     double m_xMax = 1;
@@ -87,6 +115,6 @@ private:
     QImage m_image;
 
     int m_cursorCh = -1;
-    int m_cursorRow = -1; // index in m_rows
-    int m_linkedCh = -1;  // external link (spectrum)
+    int m_cursorRow = -1;
+    int m_linkedCh = -1;
 };
