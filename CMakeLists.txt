@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(radiacode-monitor VERSION 0.2.2 LANGUAGES CXX)
+project(radiacode-monitor VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,8 +62,12 @@ set(_radiacode_monitor_sources
   src/main.cpp
   src/mainwindow.h
   src/mainwindow.cpp
+  src/acquisition/acquisitioncontroller.h
+  src/acquisition/acquisitioncontroller.cpp
   src/spectrumwidget.h
   src/spectrumwidget.cpp
+  src/spectrumwaterfall.h
+  src/spectrumwaterfall.cpp
   src/spectrumexport.h
   src/spectrumexport.cpp
   src/roitimeseries/roimath.h

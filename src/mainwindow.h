@@ -1,5 +1,6 @@
 #pragma once
 
+#include "acquisition/acquisitioncontroller.h"
 #include "device/radiacodedevice.h"
 #include "discovery/blediscovery.h"
 #include "protocol/types.h"
@@ -9,11 +10,14 @@
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QMainWindow>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QTimer>
 
 class SpectrumWidget;
+class SpectrumWaterfall;
 class RoiTimeSeriesPanel;
 
 class MainWindow : public QMainWindow {
@@ -31,6 +35,12 @@ private slots:
     void onAbout();
     void onAboutQt();
     void pollData();
+    void onAcquisitionStart();
+    void onAcquisitionStop();
+    void onAcquisitionModeChanged();
+    void onLoadBackground();
+    void onSpectrumViewChanged();
+    bool loadBackgroundFromFile(const QString &path);
 
     void onConnected();
     void onDisconnected();
@@ -70,6 +80,17 @@ private:
     void ensureEmptyPlaceholder();
     void updateRefreshButton();
     int findDeviceRow(const QString &transport, const QString &id) const;
+    void updateAcquisitionUi();
+    void abortAcquisitionIfActive(const QString &reason);
+    void updateBackgroundUi();
+    void refreshSpectrumDisplay();
+    /// Spectrum currently shown / saved (live, stored BG, or net).
+    QtRadiacode::RcSpectrum spectrumForView() const;
+    static QtRadiacode::RcSpectrum computeNetSpectrum(const QtRadiacode::RcSpectrum &sample,
+                                                     const QtRadiacode::RcSpectrum &background);
+    static quint64 spectrumTotalCounts(const QtRadiacode::RcSpectrum &sp);
+
+    enum class SpectrumView { Live = 0, Background = 1, Net = 2 };
 
     static constexpr int kPollIntervalUsbMs = 1000;
     // BLE: 1 s tick for dwell timing; at most one command per tick (see pollData).
@@ -96,8 +117,20 @@ private:
     QPushButton *m_disconnectBtn = nullptr;
     QPushButton *m_resetSpectrumBtn = nullptr;
     QPushButton *m_saveSpectrumBtn = nullptr;
+    QComboBox *m_spectrumViewCombo = nullptr;
+    QPushButton *m_loadBgBtn = nullptr;
+    QSpinBox *m_waterfallIntegrateSpin = nullptr;
+    QLabel *m_bgStatusLabel = nullptr;
     QAction *m_saveSpectrumAct = nullptr;
     QAction *m_exportRoiCsvAct = nullptr;
+
+    AcquisitionController *m_acquisition = nullptr;
+    QComboBox *m_acqModeCombo = nullptr;
+    QSpinBox *m_acqTargetSpin = nullptr;
+    QPushButton *m_acqStartBtn = nullptr;
+    QPushButton *m_acqStopBtn = nullptr;
+    QProgressBar *m_acqProgressBar = nullptr;
+    QLabel *m_acqProgressLabel = nullptr;
 
     QLabel *m_statusLabel = nullptr;
     QLabel *m_serialLabel = nullptr;
@@ -109,10 +142,12 @@ private:
     QLabel *m_signalLabel = nullptr;
     QLabel *m_spectrumLiveLabel = nullptr;
     QLabel *m_spectrumTotalLabel = nullptr;
-    QLabel *m_logLabel = nullptr;
 
     SpectrumWidget *m_spectrum = nullptr;
+    SpectrumWaterfall *m_waterfall = nullptr;
     RoiTimeSeriesPanel *m_roiPanel = nullptr;
     QtRadiacode::RcSpectrum m_lastSpectrum;
     bool m_hasSpectrum = false;
+    QtRadiacode::RcSpectrum m_backgroundSpectrum;
+    bool m_hasBackground = false;
 };

@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.3.0] — 2026-08-10
+
+### Added
+
+- **Acquisition run** (Live panel): stop by **device live time (s)** or **total
+  spectrum counts**, Start/Stop, horizontal progress bar + detail text.
+  Stop is evaluated after each full spectrum (± one poll frame).
+- Acquisition start when spectrum has data: dialog **Continue…** (keep
+  accumulation) / **Save…** / **Reset and start** / **Cancel** — no separate
+  reset checkbox.
+- **Background / Net spectrum**: **Load BG…** opens file dialog (CSV/TKA/N42/NPES-JSON);
+  view combo Live / Background / Net enabled only after BG is loaded
+  (grayed out otherwise). Workflow: Save spectrum → Load BG → Net.
+  Waterfall follows **Live** / **Net** view (rebuilds rates from stored snapshots).
+- Waterfall **integrate**: each display row covers N spectrum polls (1…32);
+  longer history (~N×), coarser time; control under View, saved in QSettings.
+- **Spectrum waterfall** (under spectrum plot): time × channel count-rate
+  (ΔN/Δt between snapshots), SDR-style colors, newest row at bottom; X range
+  follows spectrum zoom/pan. Hover cursor: energy/channel, cps, ΔN, device
+  live time, age from newest (`t−Ns`), wall clock. Spectrum ↔ waterfall
+  cursors are cross-linked (same channel highlighted on both).
+- **UI layout** (1080p-friendly): Device bar moved next to Live (above ROI
+  controls); Live form drops Serial/Firmware/Dose rate (serial/FW on Device
+  row; dose still updated internally); Messages/log panel removed (status bar only).
+
+### Fixed
+
+- Waterfall **time axis 1:1** (one history row = one screen pixel, bottom-aligned)
+  so history **scrolls** instead of being vertically squeezed into the pane.
+- Waterfall **colour scale** uses max rate over the history matrix; full recolour
+  only when that max changes (~2% hysteresis), e.g. when a source is brought near.
+
+### Notes
+
+- Library pin for this release: **qtradiacode `v0.1.3`** (unchanged from 0.2.2)
+- Longer spectrogram history, scroll-back, save/load, and region extract are
+  planned for a later release — not in 0.3.0.
+
 ## [0.2.2] — 2026-07-29
 
 ### Added

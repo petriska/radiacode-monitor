@@ -2,10 +2,12 @@
 #include "roitimeseries/roimath.h"
 #include "roitimeseries/roitimeseriespanel.h"
 #include "spectrumexport.h"
+#include "spectrumwaterfall.h"
 #include "spectrumwidget.h"
 
 #include "discovery/usbdiscovery.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QDateTime>
@@ -22,6 +24,8 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QSizePolicy>
+#include <QSpinBox>
+#include <QSplitter>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTextStream>
@@ -46,6 +50,7 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1100, 700);
 
     m_device = new QtRadiacode::RadiaCodeDevice(this);
+    m_acquisition = new AcquisitionController(this);
 
     // Always release USB on quit so the device is not left claimed after kill/close.
     connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
@@ -66,36 +71,31 @@ MainWindow::MainWindow(QWidget *parent)
     auto *central = new QWidget(this);
     setCentralWidget(central);
     auto *root = new QVBoxLayout(central);
+    root->setContentsMargins(8, 8, 8, 8);
+    root->setSpacing(6);
 
-    // Connection bar
-    auto *connBox = new QGroupBox(tr("Device"), this);
-    auto *connLay = new QHBoxLayout(connBox);
-    m_deviceCombo = new QComboBox(this);
-    m_deviceCombo->setMinimumWidth(320);
-    m_refreshBtn = new QPushButton(tr("Refresh"), this);
-    m_connectBtn = new QPushButton(tr("Connect"), this);
-    m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
-    m_refreshBtn->setToolTip(
-        tr("Re-scan USB and BLE for Radiacode devices.\n"
-           "BLE: device must be free (not held by phone or Home Assistant)."));
-    m_connectBtn->setToolTip(tr("Connect via USB or BLE to the selected device"));
-    m_disconnectBtn->setToolTip(tr("Close connection and release the device"));
-    connLay->addWidget(m_deviceCombo, 1);
-    connLay->addWidget(m_refreshBtn);
-    connLay->addWidget(m_connectBtn);
-    connLay->addWidget(m_disconnectBtn);
-    root->addWidget(connBox);
-
-    // Live (left) + ROI controls (right) — same height, visible on Spectrum and ROI tabs.
+    // Top: Live (left) | Device + ROI controls (right). Saves vertical space on 1080p.
     auto *topRow = new QHBoxLayout;
+    topRow->setSpacing(8);
 
     auto *liveBox = new QGroupBox(tr("Live"), this);
     auto *liveLay = new QVBoxLayout(liveBox);
+    liveLay->setContentsMargins(8, 8, 8, 8);
+    liveLay->setSpacing(4);
     auto *form = new QFormLayout;
+    form->setHorizontalSpacing(10);
+    form->setVerticalSpacing(3);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
     m_statusLabel = new QLabel(tr("Disconnected"), this);
+    // Kept off the main form (space); still updated for status tooltip / future UI.
     m_serialLabel = new QLabel(QStringLiteral("—"), this);
     m_fwLabel = new QLabel(QStringLiteral("—"), this);
     m_doseLabel = new QLabel(QStringLiteral("—"), this);
+    m_serialLabel->setVisible(false);
+    m_fwLabel->setVisible(false);
+    m_doseLabel->setVisible(false);
+
     m_countLabel = new QLabel(QStringLiteral("—"), this);
     m_tempLabel = new QLabel(QStringLiteral("—"), this);
     m_spectrumLiveLabel = new QLabel(QStringLiteral("—"), this);
@@ -112,15 +112,12 @@ MainWindow::MainWindow(QWidget *parent)
         tr("BLE link strength (RSSI). USB shows n/a.\n"
            "Updated from scan and about once per minute while connected (if the stack supports it)."));
     form->addRow(tr("Status"), m_statusLabel);
-    form->addRow(tr("Serial"), m_serialLabel);
-    form->addRow(tr("Firmware"), m_fwLabel);
-    form->addRow(tr("Dose rate (protocol units)"), m_doseLabel);
     form->addRow(tr("Count rate (CPS)"), m_countLabel);
     form->addRow(tr("Temperature"), m_tempLabel);
     form->addRow(tr("Battery"), m_batteryLabel);
     form->addRow(tr("BLE signal"), m_signalLabel);
     form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
-    form->addRow(tr("Spectrum Total counts"), m_spectrumTotalLabel);
+    form->addRow(tr("Spectrum total counts"), m_spectrumTotalLabel);
 
     m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), this);
     m_resetSpectrumBtn->setToolTip(
@@ -128,54 +125,234 @@ MainWindow::MainWindow(QWidget *parent)
            "The plot auto-refreshes about every 2 seconds while connected."));
     m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
     m_saveSpectrumBtn->setToolTip(
-        tr("Save the last spectrum as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON.\n"
-           "Includes live time and energy calibration where the format allows."));
+        tr("Save the spectrum currently shown (Live / Background / Net)\n"
+           "as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON."));
     auto *spectrumActions = new QHBoxLayout;
+    spectrumActions->setSpacing(6);
     spectrumActions->addWidget(m_resetSpectrumBtn);
     spectrumActions->addWidget(m_saveSpectrumBtn);
     spectrumActions->addStretch(1);
     form->addRow(QString(), spectrumActions);
 
+    m_spectrumViewCombo = new QComboBox(this);
+    m_spectrumViewCombo->addItem(tr("Live"), int(SpectrumView::Live));
+    m_spectrumViewCombo->addItem(tr("Background"), int(SpectrumView::Background));
+    m_spectrumViewCombo->addItem(tr("Net (Live − BG)"), int(SpectrumView::Net));
+    m_spectrumViewCombo->setToolTip(
+        tr("What the spectrum plot shows (enabled after a background is loaded).\n"
+           "Live: current device spectrum.\n"
+           "Background: loaded BG spectrum.\n"
+           "Net: Live − BG scaled by live-time ratio (negative bins → 0).\n\n"
+           "Workflow: Save spectrum → Load BG… → choose Background or Net."));
+    m_spectrumViewCombo->setEnabled(false);
+    m_loadBgBtn = new QPushButton(tr("Load BG…"), this);
+    m_loadBgBtn->setToolTip(
+        tr("Load a background spectrum from file (CSV, TKA, N42, NPES-JSON).\n"
+           "Save a spectrum first if you want to reuse a measurement as BG."));
+    m_bgStatusLabel = new QLabel(tr("BG: none — Load BG… to enable view modes"), this);
+    m_bgStatusLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
+    m_bgStatusLabel->setWordWrap(true);
+    auto *bgRow = new QHBoxLayout;
+    bgRow->setSpacing(6);
+    bgRow->addWidget(m_spectrumViewCombo, 1);
+    bgRow->addWidget(m_loadBgBtn);
+    form->addRow(tr("View"), bgRow);
+    form->addRow(QString(), m_bgStatusLabel);
+
+    m_waterfallIntegrateSpin = new QSpinBox(this);
+    m_waterfallIntegrateSpin->setRange(1, 32);
+    m_waterfallIntegrateSpin->setValue(1);
+    m_waterfallIntegrateSpin->setSuffix(tr(" polls"));
+    m_waterfallIntegrateSpin->setToolTip(
+        tr("Waterfall integrate: each display row sums N spectrum updates.\n"
+           "1 = every poll (~8 min history at full buffer).\n"
+           "2 ≈ 16 min, 4 ≈ 32 min, … — coarser time, longer history."));
+    form->addRow(tr("Waterfall integrate"), m_waterfallIntegrateSpin);
+
     liveLay->addLayout(form);
-    liveLay->addStretch(1); // top-align form content when Live is stretched to ROI height
-    // Preferred (not Maximum): HBox stretches both group boxes to the taller height.
-    // Do not pass AlignTop — that prevents vertical stretch and leaves unequal heights.
-    liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    topRow->addWidget(liveBox, 2);
+
+    // Acquisition run: stop by device live time or total spectrum counts.
+    auto *acqBox = new QGroupBox(tr("Acquisition"), this);
+    auto *acqLay = new QVBoxLayout(acqBox);
+    acqLay->setContentsMargins(6, 6, 6, 6);
+    acqLay->setSpacing(4);
+    auto *acqModeRow = new QHBoxLayout;
+    acqModeRow->setSpacing(6);
+    m_acqModeCombo = new QComboBox(this);
+    m_acqModeCombo->addItem(tr("Time (live s)"),
+                            int(AcquisitionController::Mode::TimeSeconds));
+    m_acqModeCombo->addItem(tr("Total counts"),
+                            int(AcquisitionController::Mode::TotalCounts));
+    m_acqModeCombo->setToolTip(
+        tr("Stop condition for a measurement run.\n"
+           "Time uses the device spectrum live time (not wall clock).\n"
+           "Total counts = sum of all spectrum channels.\n"
+           "Stop is checked after each full spectrum (± one poll frame)."));
+    m_acqTargetSpin = new QSpinBox(this);
+    m_acqTargetSpin->setRange(1, 2000000000);
+    m_acqTargetSpin->setValue(300);
+    m_acqTargetSpin->setToolTip(tr("Target live time in seconds, or total counts."));
+    acqModeRow->addWidget(m_acqModeCombo, 1);
+    acqModeRow->addWidget(m_acqTargetSpin);
+    acqLay->addLayout(acqModeRow);
+
+    auto *acqBtnRow = new QHBoxLayout;
+    acqBtnRow->setSpacing(6);
+    m_acqStartBtn = new QPushButton(tr("Start"), this);
+    m_acqStopBtn = new QPushButton(tr("Stop"), this);
+    m_acqStartBtn->setToolTip(
+        tr("Start acquisition until the target is reached.\n"
+           "If the spectrum already has data, you can Continue, Reset and start, "
+           "or Save first."));
+    m_acqStopBtn->setToolTip(tr("Abort the current acquisition run"));
+    acqBtnRow->addWidget(m_acqStartBtn);
+    acqBtnRow->addWidget(m_acqStopBtn);
+    acqBtnRow->addStretch(1);
+    acqLay->addLayout(acqBtnRow);
+
+    m_acqProgressBar = new QProgressBar(this);
+    m_acqProgressBar->setRange(0, 1000); // 0.1 % resolution
+    m_acqProgressBar->setValue(0);
+    m_acqProgressBar->setTextVisible(true);
+    m_acqProgressBar->setFormat(tr("%p%"));
+    m_acqProgressBar->setMinimumHeight(16);
+    m_acqProgressBar->setMaximumHeight(18);
+    m_acqProgressBar->setToolTip(
+        tr("Acquisition progress toward the time or count target."));
+    acqLay->addWidget(m_acqProgressBar);
+
+    m_acqProgressLabel = new QLabel(tr("—"), this);
+    m_acqProgressLabel->setWordWrap(true);
+    m_acqProgressLabel->setStyleSheet(QStringLiteral("color: #bbb;"));
+    acqLay->addWidget(m_acqProgressLabel);
+    liveLay->addWidget(acqBox);
+
+    // Live should not steal vertical space from the spectrum plot.
+    liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    liveBox->setMinimumWidth(280);
+    liveBox->setMaximumWidth(420);
+    topRow->addWidget(liveBox, 0, Qt::AlignTop);
+
+    // Right column: Device (compact) above ROI controls.
+    auto *rightCol = new QVBoxLayout;
+    rightCol->setSpacing(6);
+
+    auto *connBox = new QGroupBox(tr("Device"), this);
+    auto *connLay = new QVBoxLayout(connBox);
+    connLay->setContentsMargins(8, 6, 8, 6);
+    connLay->setSpacing(4);
+    auto *connBtnRow = new QHBoxLayout;
+    connBtnRow->setSpacing(6);
+    m_deviceCombo = new QComboBox(this);
+    m_deviceCombo->setMinimumWidth(200);
+    m_deviceCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_refreshBtn = new QPushButton(tr("Refresh"), this);
+    m_connectBtn = new QPushButton(tr("Connect"), this);
+    m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
+    m_refreshBtn->setToolTip(
+        tr("Re-scan USB and BLE for Radiacode devices.\n"
+           "BLE: device must be free (not held by phone or Home Assistant)."));
+    m_connectBtn->setToolTip(tr("Connect via USB or BLE to the selected device"));
+    m_disconnectBtn->setToolTip(tr("Close connection and release the device"));
+    connBtnRow->addWidget(m_deviceCombo, 1);
+    connBtnRow->addWidget(m_refreshBtn);
+    connBtnRow->addWidget(m_connectBtn);
+    connBtnRow->addWidget(m_disconnectBtn);
+    connLay->addLayout(connBtnRow);
+    // Serial / firmware live here instead of the Live form (compact one line).
+    auto *deviceMeta = new QHBoxLayout;
+    deviceMeta->setSpacing(12);
+    m_serialLabel->setVisible(true);
+    m_fwLabel->setVisible(true);
+    m_serialLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
+    m_fwLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
+    m_serialLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_fwLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    deviceMeta->addWidget(new QLabel(tr("Serial:"), this));
+    deviceMeta->addWidget(m_serialLabel, 1);
+    deviceMeta->addWidget(new QLabel(tr("FW:"), this));
+    deviceMeta->addWidget(m_fwLabel, 1);
+    connLay->addLayout(deviceMeta);
+    connBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    rightCol->addWidget(connBox);
 
     m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
     if (QWidget *roiCtrl = m_roiPanel->controlsWidget()) {
-        roiCtrl->setMinimumWidth(360);
+        roiCtrl->setMinimumWidth(320);
         roiCtrl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        // Reparent into the top row (still owned logically by the panel).
-        topRow->addWidget(roiCtrl, 3);
+        rightCol->addWidget(roiCtrl, 1);
     }
-    root->addLayout(topRow);
+    topRow->addLayout(rightCol, 1);
+    root->addLayout(topRow, 0);
 
     auto *tabs = new QTabWidget(this);
     m_spectrum = new SpectrumWidget(this);
-    tabs->addTab(m_spectrum, tr("Spectrum"));
-    // ROI tab: chart only (controls are above, next to Live).
+    m_waterfall = new SpectrumWaterfall(this);
+    auto *spectrumSplit = new QSplitter(Qt::Vertical, this);
+    spectrumSplit->setChildrenCollapsible(false);
+    spectrumSplit->addWidget(m_spectrum);
+    spectrumSplit->addWidget(m_waterfall);
+    spectrumSplit->setStretchFactor(0, 3);
+    spectrumSplit->setStretchFactor(1, 2);
+    spectrumSplit->setSizes({380, 200});
+    tabs->addTab(spectrumSplit, tr("Spectrum"));
+    // ROI tab: chart only (controls are above, next to Device).
     tabs->addTab(m_roiPanel, tr("ROI time series"));
-    root->addWidget(tabs, 1);
+    root->addWidget(tabs, 1); // take remaining height for plots
 
+    connect(m_spectrum, &SpectrumWidget::viewRangeChanged, m_waterfall,
+            &SpectrumWaterfall::setViewRange);
+    // Cross-link cursors: hover on one highlights the same channel on the other.
     connect(m_spectrum, &SpectrumWidget::cursorInfoChanged, this,
             [this](int channel, double energyKeV, quint32 counts) {
+        if (m_waterfall) {
+            m_waterfall->setLinkedChannel(channel);
+        }
         if (channel < 0) {
             return;
         }
-        // Brief status line while hovering the spectrum cursor.
         if (qAbs(m_lastSpectrum.a1) > 1e-12f || qAbs(m_lastSpectrum.a2) > 1e-12f
             || qAbs(m_lastSpectrum.a0) > 1e-12f) {
             statusBar()->showMessage(
-                tr("Cursor: E = %1 keV · ch %2 · N = %3")
+                tr("Spectrum: E = %1 keV · ch %2 · N = %3")
                     .arg(energyKeV, 0, 'f', 1)
                     .arg(channel)
                     .arg(counts),
                 2000);
         } else {
             statusBar()->showMessage(
-                tr("Cursor: ch %1 · N = %2").arg(channel).arg(counts), 2000);
+                tr("Spectrum: ch %1 · N = %2").arg(channel).arg(counts), 2000);
+        }
+    });
+    connect(m_waterfall, &SpectrumWaterfall::cursorInfoChanged, this,
+            [this](int channel, double energyKeV, float rateCps, quint32 deltaCounts,
+                   quint32 liveTimeSec, int ageFromNewestSec) {
+        if (m_spectrum) {
+            m_spectrum->setLinkedChannel(channel);
+        }
+        if (channel < 0) {
+            return;
+        }
+        if (qAbs(m_lastSpectrum.a1) > 1e-12f || qAbs(m_lastSpectrum.a2) > 1e-12f
+            || qAbs(m_lastSpectrum.a0) > 1e-12f) {
+            statusBar()->showMessage(
+                tr("Waterfall: E = %1 keV · ch %2 · %3 cps · ΔN = %4 · live %5 s · t−%6 s")
+                    .arg(energyKeV, 0, 'f', 1)
+                    .arg(channel)
+                    .arg(rateCps, 0, 'f', 2)
+                    .arg(deltaCounts)
+                    .arg(liveTimeSec)
+                    .arg(ageFromNewestSec),
+                2500);
+        } else {
+            statusBar()->showMessage(
+                tr("Waterfall: ch %1 · %2 cps · ΔN = %3 · live %4 s · t−%5 s")
+                    .arg(channel)
+                    .arg(rateCps, 0, 'f', 2)
+                    .arg(deltaCounts)
+                    .arg(liveTimeSec)
+                    .arg(ageFromNewestSec),
+                2500);
         }
     });
 
@@ -214,32 +391,32 @@ MainWindow::MainWindow(QWidget *parent)
         if (op != QStringLiteral("spectrumReset")) {
             return;
         }
-        if (!m_roiPanel || !m_roiPanel->isRecording()) {
-            return;
-        }
         if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
             return;
         }
+
+        const bool acqWaiting =
+            m_acquisition
+            && m_acquisition->state() == AcquisitionController::State::WaitingReset;
+        const bool roiRecording = m_roiPanel && m_roiPanel->isRecording();
+
+        if (acqWaiting) {
+            m_acquisition->notifySpectrumResetFinished();
+        }
+        if (!acqWaiting && !roiRecording) {
+            return;
+        }
         // Brief settle after WR_VIRT_STRING spectrum clear, then first sample.
-        QTimer::singleShot(150, this, [this] {
-            if (m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected
-                && m_roiPanel && m_roiPanel->isRecording()) {
+        QTimer::singleShot(150, this, [this, acqWaiting, roiRecording] {
+            if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+                return;
+            }
+            if (acqWaiting
+                || (roiRecording && m_roiPanel && m_roiPanel->isRecording())) {
                 m_device->requestSpectrum();
             }
         });
     });
-
-    // Last events / errors — also mirrored to the status bar (bottom of the window).
-    auto *msgBox = new QGroupBox(tr("Messages (log)"), this);
-    auto *msgLay = new QVBoxLayout(msgBox);
-    m_logLabel = new QLabel(tr("Ready."), this);
-    m_logLabel->setWordWrap(true);
-    m_logLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_logLabel->setMinimumHeight(48);
-    m_logLabel->setStyleSheet(
-        QStringLiteral("color: #ddd; font-size: 12px; background: #1a1a1e; padding: 6px;"));
-    msgLay->addWidget(m_logLabel);
-    root->addWidget(msgBox);
 
     statusBar()->showMessage(tr("Ready — pick a device and Connect."));
 
@@ -250,6 +427,47 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
     connect(m_resetSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onResetSpectrum);
     connect(m_saveSpectrumBtn, &QPushButton::clicked, this, &MainWindow::onSaveSpectrum);
+    connect(m_loadBgBtn, &QPushButton::clicked, this, &MainWindow::onLoadBackground);
+    connect(m_spectrumViewCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &MainWindow::onSpectrumViewChanged);
+    connect(m_waterfallIntegrateSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int n) {
+        if (m_waterfall) {
+            m_waterfall->setIntegrateCount(n);
+        }
+        QSettings().setValue(QStringLiteral("waterfall/integrate"), n);
+    });
+    connect(m_acqStartBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStart);
+    connect(m_acqStopBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStop);
+    connect(m_acqModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &MainWindow::onAcquisitionModeChanged);
+
+    connect(m_acquisition, &AcquisitionController::requestSpectrumReset, this, [this] {
+        if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+            abortAcquisitionIfActive(tr("not connected"));
+            return;
+        }
+        m_device->spectrumReset();
+    });
+    connect(m_acquisition, &AcquisitionController::logMessage, this, &MainWindow::appendLog);
+    connect(m_acquisition, &AcquisitionController::progress, this,
+            [this](double fraction, const QString &text) {
+        if (m_acqProgressBar) {
+            const int v = qBound(0, int(fraction * 1000.0 + 0.5), 1000);
+            m_acqProgressBar->setValue(v);
+        }
+        if (m_acqProgressLabel) {
+            m_acqProgressLabel->setText(text);
+        }
+    });
+    connect(m_acquisition, &AcquisitionController::stateChanged, this,
+            [this](AcquisitionController::State) { updateAcquisitionUi(); });
+    connect(m_acquisition, &AcquisitionController::completed, this, [this](const QString &summary) {
+        statusBar()->showMessage(tr("Acquisition %1").arg(summary), 15000);
+        updateAcquisitionUi();
+    });
+    connect(m_acquisition, &AcquisitionController::aborted, this,
+            [this](const QString &) { updateAcquisitionUi(); });
 
     connect(m_device, &QtRadiacode::RadiaCodeDevice::connected, this, &MainWindow::onConnected);
     connect(m_device, &QtRadiacode::RadiaCodeDevice::disconnected, this, &MainWindow::onDisconnected);
@@ -267,7 +485,23 @@ MainWindow::MainWindow(QWidget *parent)
     // After ROI panel exists (File → Export ROI CSV…).
     setupMenuBar();
 
+    onAcquisitionModeChanged();
     setConnectedUi(false);
+    updateAcquisitionUi();
+    updateBackgroundUi();
+    {
+        QSettings settings;
+        const int integ = settings.value(QStringLiteral("waterfall/integrate"), 1).toInt();
+        if (m_waterfallIntegrateSpin) {
+            const QSignalBlocker blocker(m_waterfallIntegrateSpin);
+            m_waterfallIntegrateSpin->setValue(qBound(1, integ, 32));
+        }
+        if (m_waterfall) {
+            m_waterfall->setIntegrateCount(m_waterfallIntegrateSpin
+                                               ? m_waterfallIntegrateSpin->value()
+                                               : 1);
+        }
+    }
     refreshDeviceList();
 }
 
@@ -578,6 +812,14 @@ void MainWindow::onResetSpectrum()
     }
     appendLog(tr("Resetting spectrum on device…"));
     m_spectrum->clear();
+    if (m_waterfall) {
+        m_waterfall->clear();
+        // Keep BG on waterfall if loaded (history restarts empty after reset).
+        if (m_hasBackground) {
+            m_waterfall->setBackground(m_backgroundSpectrum.counts,
+                                       m_backgroundSpectrum.durationSec);
+        }
+    }
     m_hasSpectrum = false;
     m_lastSpectrum = {};
     m_spectrumLiveLabel->setText(QStringLiteral("—"));
@@ -619,9 +861,20 @@ QString MainWindow::formatDuration(quint32 sec)
 
 void MainWindow::onSaveSpectrum()
 {
-    if (!m_hasSpectrum || m_lastSpectrum.counts.isEmpty()) {
+    const QtRadiacode::RcSpectrum sp = spectrumForView();
+    if (sp.counts.isEmpty()) {
         appendLog(tr("No spectrum to save yet."));
         return;
+    }
+
+    const auto view = static_cast<SpectrumView>(
+        m_spectrumViewCombo ? m_spectrumViewCombo->currentData().toInt()
+                            : int(SpectrumView::Live));
+    QString viewTag = QStringLiteral("live");
+    if (view == SpectrumView::Background) {
+        viewTag = QStringLiteral("bg");
+    } else if (view == SpectrumView::Net) {
+        viewTag = QStringLiteral("net");
     }
 
     const QString serial = m_device->serialNumber().isEmpty()
@@ -630,9 +883,9 @@ void MainWindow::onSaveSpectrum()
     const QString stamp =
         QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
     // Basename without extension — suffix is applied from the selected format.
-    const QString baseName = QStringLiteral("%1_spectrum_%2s_%3")
-                                 .arg(serial)
-                                 .arg(m_lastSpectrum.durationSec)
+    const QString baseName = QStringLiteral("%1_%2_%3s_%4")
+                                 .arg(serial, viewTag)
+                                 .arg(sp.durationSec)
                                  .arg(stamp);
 
     QSettings settings;
@@ -699,7 +952,7 @@ void MainWindow::onSaveSpectrum()
     const QString err = SpectrumExport::writeSpectrumFile(
         path,
         format,
-        m_lastSpectrum,
+        sp,
         serial,
         m_device->firmwareVersion());
     if (!err.isEmpty()) {
@@ -724,10 +977,10 @@ void MainWindow::onSaveSpectrum()
         fmtName = QStringLiteral("NPES-JSON");
     }
 
-    appendLog(tr("Spectrum saved as %1 (%2 s live, %3 ch) → %4")
-                  .arg(fmtName)
-                  .arg(m_lastSpectrum.durationSec)
-                  .arg(m_lastSpectrum.counts.size())
+    appendLog(tr("Spectrum saved as %1 (%2, %3 s live, %4 ch) → %5")
+                  .arg(fmtName, viewTag)
+                  .arg(sp.durationSec)
+                  .arg(sp.counts.size())
                   .arg(path));
 }
 
@@ -896,9 +1149,16 @@ void MainWindow::onConnected()
     if (m_roiPanel) {
         m_roiPanel->setConnected(true);
     }
-    m_serialLabel->setText(m_device->serialNumber());
-    m_fwLabel->setText(m_device->firmwareVersion());
+    m_serialLabel->setText(m_device->serialNumber().isEmpty()
+                               ? QStringLiteral("—")
+                               : m_device->serialNumber());
+    m_fwLabel->setText(m_device->firmwareVersion().isEmpty()
+                           ? QStringLiteral("—")
+                           : m_device->firmwareVersion());
     m_statusLabel->setText(tr("Connected"));
+    m_statusLabel->setToolTip(
+        tr("Serial: %1\nFirmware: %2")
+            .arg(m_device->serialNumber(), m_device->firmwareVersion()));
     m_pollTick = 0;
     m_spectrumInflight = false;
     m_haveSpectrumSample = false;
@@ -937,6 +1197,7 @@ void MainWindow::onConnected()
 
 void MainWindow::onDisconnected()
 {
+    abortAcquisitionIfActive(tr("disconnected"));
     m_pollTimer->stop();
     stopSlowStatusTimer();
     m_pollTick = 0;
@@ -947,6 +1208,7 @@ void MainWindow::onDisconnected()
         m_roiPanel->setConnected(false);
     }
     m_statusLabel->setText(tr("Disconnected"));
+    m_statusLabel->setToolTip(QString());
     m_doseLabel->setText(QStringLiteral("—"));
     m_countLabel->setText(QStringLiteral("—"));
     m_tempLabel->setText(QStringLiteral("—"));
@@ -957,6 +1219,9 @@ void MainWindow::onDisconnected()
     m_serialLabel->setText(QStringLiteral("—"));
     m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
+    if (m_waterfall) {
+        m_waterfall->clear();
+    }
     m_hasSpectrum = false;
     m_lastSpectrum = {};
     appendLog(tr("Disconnected"));
@@ -1064,28 +1329,368 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     m_haveSpectrumSample = true;
     m_lastSpectrum = sp;
     m_hasSpectrum = !sp.counts.isEmpty();
-    m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
-    m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
-    m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
-    if (m_saveSpectrumAct) {
-        m_saveSpectrumAct->setEnabled(m_hasSpectrum);
-    }
     if (m_roiPanel) {
         m_roiPanel->onSpectrum(sp);
     }
-
-    quint64 totalCounts = 0;
-    for (quint32 c : sp.counts) {
-        totalCounts += c;
+    if (m_acquisition) {
+        m_acquisition->onSpectrum(sp);
     }
-    m_spectrumTotalLabel->setText(tr("%1").arg(totalCounts));
-    // ch = number of energy channels; total = sum of counts; live = accumulation time
-    statusBar()->showMessage(
-        tr("Spectrum: total %1 counts | %2 channels | live time %3")
-            .arg(totalCounts)
-            .arg(sp.counts.size())
-            .arg(formatDuration(sp.durationSec)),
-        3000);
+    // Waterfall stores live snapshots; display follows Live/Net view (Net uses BG).
+    if (m_waterfall) {
+        m_waterfall->setCalibration(sp.a0, sp.a1, sp.a2);
+        m_waterfall->pushSpectrum(sp.counts, sp.durationSec);
+    }
+    refreshSpectrumDisplay();
+    updateBackgroundUi();
+
+    // Prefer acquisition progress in the status bar while a run is active.
+    if (!m_acquisition || !m_acquisition->isActive()) {
+        const quint64 total = spectrumTotalCounts(sp);
+        statusBar()->showMessage(
+            tr("Spectrum: total %1 counts | %2 channels | live time %3")
+                .arg(total)
+                .arg(sp.counts.size())
+                .arg(formatDuration(sp.durationSec)),
+            3000);
+    }
+}
+
+bool MainWindow::loadBackgroundFromFile(const QString &path)
+{
+    QtRadiacode::RcSpectrum sp;
+    const QString err = SpectrumExport::readSpectrumFile(path, &sp);
+    if (!err.isEmpty()) {
+        appendLog(tr("Load BG failed: %1").arg(err));
+        QMessageBox::warning(this, tr("Load background"), err);
+        return false;
+    }
+    if (sp.counts.isEmpty()) {
+        appendLog(tr("Load BG failed: spectrum has no channels."));
+        return false;
+    }
+    m_backgroundSpectrum = sp;
+    m_hasBackground = true;
+    if (m_waterfall) {
+        m_waterfall->setBackground(sp.counts, sp.durationSec);
+    }
+    const quint64 n = spectrumTotalCounts(m_backgroundSpectrum);
+    appendLog(tr("Background loaded from %1 — live time %2, total counts %3, %4 ch")
+                  .arg(QFileInfo(path).fileName())
+                  .arg(formatDuration(m_backgroundSpectrum.durationSec))
+                  .arg(n)
+                  .arg(m_backgroundSpectrum.counts.size()));
+    updateBackgroundUi();
+    refreshSpectrumDisplay();
+    // If already on Net, rebuild waterfall in net mode with new BG.
+    onSpectrumViewChanged();
+    return true;
+}
+
+void MainWindow::onLoadBackground()
+{
+    QSettings settings;
+    const QString lastDir = settings
+                                .value(QStringLiteral("spectrumExport/dir"),
+                                       QStandardPaths::writableLocation(
+                                           QStandardPaths::DocumentsLocation))
+                                .toString();
+    const QString startDir =
+        QDir(lastDir).exists()
+            ? lastDir
+            : QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Load background spectrum"),
+        startDir,
+        SpectrumExport::openFormatFilterString());
+    if (path.isEmpty()) {
+        return;
+    }
+
+    settings.setValue(QStringLiteral("spectrumExport/dir"),
+                      QFileInfo(path).absolutePath());
+    loadBackgroundFromFile(path);
+}
+
+void MainWindow::onSpectrumViewChanged()
+{
+    // Waterfall follows Live vs Net; Background view keeps last waterfall mode (usually Live).
+    if (m_waterfall && m_spectrumViewCombo) {
+        const auto view =
+            static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt());
+        if (view == SpectrumView::Net) {
+            m_waterfall->setDisplayMode(SpectrumWaterfall::DisplayMode::Net);
+        } else {
+            // Live or Background → show Live rates in waterfall
+            m_waterfall->setDisplayMode(SpectrumWaterfall::DisplayMode::Live);
+        }
+    }
+    refreshSpectrumDisplay();
+    updateBackgroundUi();
+}
+
+quint64 MainWindow::spectrumTotalCounts(const QtRadiacode::RcSpectrum &sp)
+{
+    quint64 total = 0;
+    for (quint32 c : sp.counts) {
+        total += c;
+    }
+    return total;
+}
+
+QtRadiacode::RcSpectrum MainWindow::computeNetSpectrum(const QtRadiacode::RcSpectrum &sample,
+                                                       const QtRadiacode::RcSpectrum &background)
+{
+    QtRadiacode::RcSpectrum net;
+    net.durationSec = sample.durationSec;
+    net.a0 = sample.a0;
+    net.a1 = sample.a1;
+    net.a2 = sample.a2;
+
+    const int n = qMin(sample.counts.size(), background.counts.size());
+    if (n <= 0) {
+        return net;
+    }
+
+    // Scale BG to sample live time so unequal run lengths stay comparable.
+    const double scale = (background.durationSec > 0)
+        ? double(sample.durationSec) / double(background.durationSec)
+        : 1.0;
+
+    net.counts.resize(sample.counts.size());
+    for (int i = 0; i < sample.counts.size(); ++i) {
+        if (i >= n) {
+            net.counts[i] = sample.counts[i];
+            continue;
+        }
+        const double bgScaled = double(background.counts[i]) * scale;
+        const double v = double(sample.counts[i]) - bgScaled;
+        net.counts[i] = v > 0.0 ? static_cast<quint32>(v + 0.5) : 0u;
+    }
+    return net;
+}
+
+QtRadiacode::RcSpectrum MainWindow::spectrumForView() const
+{
+    const auto view = m_spectrumViewCombo
+        ? static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt())
+        : SpectrumView::Live;
+
+    switch (view) {
+    case SpectrumView::Background:
+        return m_hasBackground ? m_backgroundSpectrum : QtRadiacode::RcSpectrum{};
+    case SpectrumView::Net:
+        if (m_hasBackground && m_hasSpectrum) {
+            return computeNetSpectrum(m_lastSpectrum, m_backgroundSpectrum);
+        }
+        return m_hasSpectrum ? m_lastSpectrum : QtRadiacode::RcSpectrum{};
+    case SpectrumView::Live:
+    default:
+        return m_hasSpectrum ? m_lastSpectrum : QtRadiacode::RcSpectrum{};
+    }
+}
+
+void MainWindow::refreshSpectrumDisplay()
+{
+    const QtRadiacode::RcSpectrum sp = spectrumForView();
+    if (sp.counts.isEmpty()) {
+        m_spectrum->clear();
+        m_spectrumLiveLabel->setText(QStringLiteral("—"));
+        m_spectrumTotalLabel->setText(QStringLiteral("—"));
+    } else {
+        m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
+        m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
+        m_spectrumTotalLabel->setText(tr("%1").arg(spectrumTotalCounts(sp)));
+    }
+
+    const bool canSave = !sp.counts.isEmpty();
+    m_saveSpectrumBtn->setEnabled(canSave);
+    if (m_saveSpectrumAct) {
+        m_saveSpectrumAct->setEnabled(canSave);
+    }
+}
+
+void MainWindow::updateBackgroundUi()
+{
+    if (m_loadBgBtn) {
+        m_loadBgBtn->setEnabled(true);
+    }
+    // View modes (Background / Net) only make sense after a BG is loaded.
+    if (m_spectrumViewCombo) {
+        m_spectrumViewCombo->setEnabled(m_hasBackground);
+        if (!m_hasBackground && m_spectrumViewCombo->currentIndex() != 0) {
+            // Force Live without treating it as a user selection loop.
+            const QSignalBlocker blocker(m_spectrumViewCombo);
+            m_spectrumViewCombo->setCurrentIndex(0);
+        }
+    }
+    if (m_bgStatusLabel) {
+        if (!m_hasBackground) {
+            m_bgStatusLabel->setText(tr("BG: none — Load BG… to enable view modes"));
+        } else {
+            m_bgStatusLabel->setText(
+                tr("BG: live time %1 · total counts %2 · %3 ch")
+                    .arg(formatDuration(m_backgroundSpectrum.durationSec))
+                    .arg(spectrumTotalCounts(m_backgroundSpectrum))
+                    .arg(m_backgroundSpectrum.counts.size()));
+        }
+    }
+}
+
+void MainWindow::onAcquisitionStart()
+{
+    if (!m_acquisition || !m_device) {
+        return;
+    }
+    if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+        appendLog(tr("Acquisition: connect a device first."));
+        return;
+    }
+    if (m_acquisition->isActive()) {
+        return;
+    }
+
+    const auto mode = static_cast<AcquisitionController::Mode>(
+        m_acqModeCombo->currentData().toInt());
+    const quint64 target = static_cast<quint64>(m_acqTargetSpin->value());
+
+    // If spectrum already has data, choose: continue accumulating, reset first, or save.
+    bool reset = false;
+    while (true) {
+        quint64 existingCounts = 0;
+        for (quint32 c : m_lastSpectrum.counts) {
+            existingCounts += c;
+        }
+        const quint32 liveSec = m_lastSpectrum.durationSec;
+        const bool hasData = m_hasSpectrum && (existingCounts > 0 || liveSec > 0);
+        if (!hasData) {
+            // Empty spectrum — no need to ask; start from current (already ~zero).
+            reset = false;
+            break;
+        }
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(tr("Start acquisition"));
+        box.setText(
+            tr("Current spectrum already has data.\n\n"
+               "Live time %1 · total counts %2")
+                .arg(formatDuration(liveSec))
+                .arg(existingCounts));
+        box.setInformativeText(
+            tr("Continue keeps the accumulation and runs until the target.\n"
+               "Reset and start clears the spectrum on the device first.\n"
+               "Save… stores the current spectrum without starting yet."));
+
+        auto *continueBtn = box.addButton(tr("Continue…"), QMessageBox::AcceptRole);
+        auto *saveBtn = box.addButton(tr("Save…"), QMessageBox::ActionRole);
+        auto *resetBtn =
+            box.addButton(tr("Reset and start"), QMessageBox::DestructiveRole);
+        auto *cancelBtn = box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(continueBtn);
+        box.exec();
+
+        QAbstractButton *clicked = box.clickedButton();
+        if (clicked == cancelBtn || clicked == nullptr) {
+            return;
+        }
+        if (clicked == saveBtn) {
+            onSaveSpectrum();
+            continue; // ask again after save
+        }
+        if (clicked == continueBtn) {
+            reset = false;
+            break;
+        }
+        if (clicked == resetBtn) {
+            reset = true;
+            break;
+        }
+        return;
+    }
+
+    if (m_acqProgressBar) {
+        m_acqProgressBar->setValue(0);
+    }
+    m_acquisition->start(mode, target, reset);
+    updateAcquisitionUi();
+}
+
+void MainWindow::onAcquisitionStop()
+{
+    abortAcquisitionIfActive(tr("stopped by user"));
+}
+
+void MainWindow::onAcquisitionModeChanged()
+{
+    if (!m_acqModeCombo || !m_acqTargetSpin) {
+        return;
+    }
+    const auto mode = static_cast<AcquisitionController::Mode>(
+        m_acqModeCombo->currentData().toInt());
+    if (mode == AcquisitionController::Mode::TimeSeconds) {
+        m_acqTargetSpin->setSuffix(tr(" s"));
+        m_acqTargetSpin->setSingleStep(10);
+        // Keep a sensible default when switching from large count targets.
+        if (m_acqTargetSpin->value() > 86400) {
+            m_acqTargetSpin->setValue(300);
+        }
+        m_acqTargetSpin->setMaximum(86400);
+    } else {
+        m_acqTargetSpin->setSuffix(QString());
+        m_acqTargetSpin->setSingleStep(1000);
+        m_acqTargetSpin->setMaximum(2000000000);
+        if (m_acqTargetSpin->value() < 1000) {
+            m_acqTargetSpin->setValue(100000);
+        }
+    }
+}
+
+void MainWindow::updateAcquisitionUi()
+{
+    const bool connected =
+        m_device && m_device->state() == QtRadiacode::RadiaCodeDevice::State::Connected;
+    const bool active = m_acquisition && m_acquisition->isActive();
+
+    if (m_acqStartBtn) {
+        m_acqStartBtn->setEnabled(connected && !active);
+    }
+    if (m_acqStopBtn) {
+        m_acqStopBtn->setEnabled(active);
+    }
+    if (m_acqModeCombo) {
+        m_acqModeCombo->setEnabled(connected && !active);
+    }
+    if (m_acqTargetSpin) {
+        m_acqTargetSpin->setEnabled(connected && !active);
+    }
+    if (!active) {
+        if (m_acqProgressLabel
+            && (m_acqProgressLabel->text().isEmpty()
+                || m_acqProgressLabel->text() == QLatin1String("—"))) {
+            m_acqProgressLabel->setText(tr("—"));
+        }
+        // Keep final 100% after complete; only clear bar when fully idle with no text.
+        if (m_acqProgressBar && m_acqProgressLabel
+            && m_acqProgressLabel->text() == QLatin1String("—")) {
+            m_acqProgressBar->setValue(0);
+        }
+    }
+}
+
+void MainWindow::abortAcquisitionIfActive(const QString &reason)
+{
+    if (m_acquisition && m_acquisition->isActive()) {
+        m_acquisition->abort(reason);
+    }
+    if (m_acqProgressBar) {
+        m_acqProgressBar->setValue(0);
+    }
+    if (m_acqProgressLabel) {
+        m_acqProgressLabel->setText(tr("—"));
+    }
+    updateAcquisitionUi();
 }
 
 void MainWindow::setConnectedUi(bool connected)
@@ -1093,20 +1698,17 @@ void MainWindow::setConnectedUi(bool connected)
     m_connectBtn->setEnabled(!connected);
     m_disconnectBtn->setEnabled(connected);
     m_resetSpectrumBtn->setEnabled(connected);
-    // Save uses last cached spectrum — allowed offline too after a capture.
-    m_saveSpectrumBtn->setEnabled(m_hasSpectrum);
-    if (m_saveSpectrumAct) {
-        m_saveSpectrumAct->setEnabled(m_hasSpectrum);
-    }
     m_deviceCombo->setEnabled(!connected);
     updateRefreshButton();
     if (m_roiPanel) {
         m_roiPanel->setConnected(connected);
     }
+    updateAcquisitionUi();
+    updateBackgroundUi();
+    refreshSpectrumDisplay(); // keep Save enabled offline when spectrum cached
 }
 
 void MainWindow::appendLog(const QString &line)
 {
-    m_logLabel->setText(line);
     statusBar()->showMessage(line, 15000);
 }

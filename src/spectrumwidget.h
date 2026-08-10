@@ -24,9 +24,17 @@ public:
     void clear();
     void resetView();
 
+    double viewXMin() const { return m_xMin; }
+    double viewXMax() const { return m_xMax; }
+
+    /// Vertical highlight linked from waterfall hover (−1 = none). Does not emit signals.
+    void setLinkedChannel(int channel);
+
 signals:
     /// Emitted when the cursor channel changes (-1 when outside plot / no data).
     void cursorInfoChanged(int channel, double energyKeV, quint32 counts);
+    /// Visible channel range [xMin, xMax) after zoom/pan/reset.
+    void viewRangeChanged(double xMin, double xMax);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -44,6 +52,7 @@ private:
     double channelToX(double channel, const QRect &plot) const;
     double xToChannel(int x, const QRect &plot) const;
     void clampView();
+    void emitViewRange();
     void setCursorFromPos(const QPoint &pos);
     void clearCursor();
     quint32 maxCountInView() const;
@@ -66,6 +75,7 @@ private:
     double m_xMax = 1;
 
     int m_cursorCh = -1;
+    int m_linkedCh = -1; // external link (waterfall)
     bool m_panning = false;
     QPoint m_lastPanPos;
 };

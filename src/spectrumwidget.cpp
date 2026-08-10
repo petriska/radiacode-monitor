@@ -52,6 +52,7 @@ void SpectrumWidget::setSpectrum(const QVector<quint32> &counts, float a0, float
     if (oldN != n || m_xMax <= m_xMin) {
         m_xMin = 0;
         m_xMax = static_cast<double>(n);
+        emitViewRange();
     } else {
         clampView();
     }
@@ -69,7 +70,22 @@ void SpectrumWidget::clear()
     m_counts.clear();
     m_xMin = 0;
     m_xMax = 1;
+    m_linkedCh = -1;
     clearCursor();
+    emitViewRange();
+    update();
+}
+
+void SpectrumWidget::setLinkedChannel(int channel)
+{
+    int ch = channel;
+    if (ch >= 0 && ch >= channelCount()) {
+        ch = -1;
+    }
+    if (m_linkedCh == ch) {
+        return;
+    }
+    m_linkedCh = ch;
     update();
 }
 
@@ -82,6 +98,7 @@ void SpectrumWidget::resetView()
         m_xMin = 0;
         m_xMax = 1;
     }
+    emitViewRange();
     update();
 }
 
@@ -148,6 +165,11 @@ void SpectrumWidget::clampView()
             m_xMin = 0;
         }
     }
+}
+
+void SpectrumWidget::emitViewRange()
+{
+    emit viewRangeChanged(m_xMin, m_xMax);
 }
 
 double SpectrumWidget::channelToX(double channel, const QRect &plot) const
@@ -358,7 +380,8 @@ void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) 
         if (h <= 0) {
             continue;
         }
-        p.fillRect(left, plot.bottom() - h, w, h, barColorForChannel(i, i == m_cursorCh));
+        const bool hi = (i == m_cursorCh) || (i == m_linkedCh);
+        p.fillRect(left, plot.bottom() - h, w, h, barColorForChannel(i, hi));
     }
 
     p.setPen(QColor(70, 72, 80));
@@ -368,29 +391,52 @@ void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) 
 
 void SpectrumWidget::drawCursor(QPainter &p, const QRect &plot) const
 {
-    if (m_cursorCh < 0 || m_cursorCh >= channelCount()) {
+    const int n = channelCount();
+    if (n <= 0) {
         return;
     }
 
     p.setRenderHint(QPainter::Antialiasing, true);
+
+    // Linked line from waterfall (cyan) — always full height when set.
+    if (m_linkedCh >= 0 && m_linkedCh < n && m_linkedCh != m_cursorCh) {
+        const double xMidL = 0.5
+            * (channelToX(static_cast<double>(m_linkedCh), plot)
+               + channelToX(static_cast<double>(m_linkedCh + 1), plot));
+        const int xl = static_cast<int>(std::lround(xMidL));
+        p.setPen(QPen(QColor(100, 220, 255, 200), 1, Qt::DotLine));
+        p.drawLine(xl, plot.top(), xl, plot.bottom());
+    }
+
+    // Active hover cursor (or linked-only when mouse is not on spectrum).
+    const int ch = (m_cursorCh >= 0) ? m_cursorCh : m_linkedCh;
+    if (ch < 0 || ch >= n) {
+        return;
+    }
+
     const double xMid = 0.5
-        * (channelToX(static_cast<double>(m_cursorCh), plot)
-           + channelToX(static_cast<double>(m_cursorCh + 1), plot));
+        * (channelToX(static_cast<double>(ch), plot)
+           + channelToX(static_cast<double>(ch + 1), plot));
     const int x = static_cast<int>(std::lround(xMid));
 
-    p.setPen(QPen(QColor(255, 200, 80, 220), 1, Qt::DashLine));
+    const bool fromLink = (m_cursorCh < 0 && m_linkedCh >= 0);
+    p.setPen(QPen(fromLink ? QColor(100, 220, 255, 220) : QColor(255, 200, 80, 220), 1,
+                  Qt::DashLine));
     p.drawLine(x, plot.top(), x, plot.bottom());
 
-    const double e = channelToEnergy(static_cast<double>(m_cursorCh));
-    const quint32 c = m_counts[m_cursorCh];
+    const double e = channelToEnergy(static_cast<double>(ch));
+    const quint32 c = m_counts[ch];
     QString text;
     if (hasEnergyAxis()) {
         text = tr("E = %1 keV  ·  ch %2  ·  N = %3")
                    .arg(e, 0, 'f', 1)
-                   .arg(m_cursorCh)
+                   .arg(ch)
                    .arg(c);
     } else {
-        text = tr("ch %1  ·  N = %2").arg(m_cursorCh).arg(c);
+        text = tr("ch %1  ·  N = %2").arg(ch).arg(c);
+    }
+    if (fromLink) {
+        text = tr("Linked · %1").arg(text);
     }
 
     const QFontMetrics fm(p.font());
@@ -412,7 +458,7 @@ void SpectrumWidget::drawCursor(QPainter &p, const QRect &plot) const
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(20, 22, 28, 220));
     p.drawRoundedRect(QRect(bx, by, tw, th), 4, 4);
-    p.setPen(QColor(255, 220, 140));
+    p.setPen(fromLink ? QColor(160, 230, 255) : QColor(255, 220, 140));
     p.drawText(bx + pad, by + pad + fm.ascent(), text);
 }
 
@@ -428,6 +474,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent *event)
             m_xMin += dCh;
             m_xMax += dCh;
             clampView();
+            emitViewRange();
             setCursorFromPos(event->pos());
             update();
         }
@@ -503,6 +550,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent *event)
     m_xMin = anchor - t * newSpan;
     m_xMax = m_xMin + newSpan;
     clampView();
+    emitViewRange();
     setCursorFromPos(pos);
     update();
     event->accept();
