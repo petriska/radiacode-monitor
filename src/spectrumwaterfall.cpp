@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
     : QWidget(parent)
@@ -18,8 +19,11 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
     setToolTip(tr(
         "Waterfall: count rate per channel over time (ΔN / Δt).\n"
         "Follows spectrum view: Live or Net (when a background is loaded).\n"
-        "Newest row at the bottom. Hover for energy, rate, ΔN, and time.\n"
-        "X range follows spectrum zoom when linked."));
+        "Newest row at the bottom. Time is 1:1 (one row = one pixel) so history\n"
+        "only scrolls — it is not squeezed to fill the pane.\n"
+        "Colour scale = 0 … max rate over history; the image is recoloured when\n"
+        "that max changes (e.g. a source is brought near), with ~2% hysteresis.\n"
+        "Hover for energy, rate, ΔN, and time. X range follows spectrum zoom."));
 }
 
 void SpectrumWaterfall::setMaxRows(int rows)
@@ -72,6 +76,9 @@ void SpectrumWaterfall::clear()
     m_channels = 0;
     m_displayMax = 1.0f;
     m_image = QImage();
+    m_hasBaseline = false;
+    m_baseline = Snapshot{};
+    m_integrateProgress = 0;
     m_linkedCh = -1;
     clearCursor();
     update();
@@ -88,9 +95,6 @@ void SpectrumWaterfall::clearBackground()
 {
     m_bgCounts.clear();
     m_bgDurationSec = 0;
-    if (m_mode == DisplayMode::Net) {
-        // Keep mode, but netModeActive() will fall back to Live until BG returns.
-    }
     rebuildRowsFromSnapshots();
 }
 
@@ -190,6 +194,67 @@ QVector<quint32> SpectrumWaterfall::netCountsFor(const Snapshot &snap) const
     return net;
 }
 
+bool SpectrumWaterfall::makeRow(const Snapshot &prev, const Snapshot &cur, Row *out) const
+{
+    if (!out || m_channels <= 0) {
+        return false;
+    }
+    const qint64 dT = qint64(cur.durationSec) - qint64(prev.durationSec);
+    if (dT <= 0) {
+        return false;
+    }
+
+    const bool useNet = netModeActive();
+    const QVector<quint32> a = useNet ? netCountsFor(prev) : prev.counts;
+    const QVector<quint32> b = useNet ? netCountsFor(cur) : cur.counts;
+    const int n = qMin(m_channels, qMin(a.size(), b.size()));
+
+    out->rates.resize(m_channels);
+    out->deltas.resize(m_channels);
+    out->liveTimeSec = cur.durationSec;
+    out->intervalSec = static_cast<quint32>(dT);
+    out->wallTime = cur.wallTime;
+
+    for (int ch = 0; ch < m_channels; ++ch) {
+        quint32 dN = 0;
+        if (ch < n) {
+            const qint64 d = qint64(b.at(ch)) - qint64(a.at(ch));
+            dN = d > 0 ? static_cast<quint32>(d) : 0u;
+        }
+        out->deltas[ch] = dN;
+        out->rates[ch] = float(dN) / float(dT);
+    }
+    return true;
+}
+
+void SpectrumWaterfall::ensureImage()
+{
+    if (m_channels <= 0 || m_maxRows <= 0) {
+        m_image = QImage();
+        return;
+    }
+    if (m_image.width() == m_channels && m_image.height() == m_maxRows
+        && m_image.format() == QImage::Format_RGB32) {
+        return;
+    }
+    m_image = QImage(m_channels, m_maxRows, QImage::Format_RGB32);
+    m_image.fill(QColor(20, 22, 26));
+}
+
+float SpectrumWaterfall::matrixMaxRate() const
+{
+    float mx = 0.0f;
+    for (const Row &row : m_rows) {
+        for (float rate : row.rates) {
+            mx = std::max(mx, rate);
+        }
+    }
+    if (mx < 1e-6f) {
+        mx = 1e-6f;
+    }
+    return mx;
+}
+
 void SpectrumWaterfall::rebuildImage()
 {
     if (m_channels <= 0 || m_maxRows <= 0) {
@@ -216,62 +281,167 @@ void SpectrumWaterfall::rebuildImage()
     }
 }
 
-void SpectrumWaterfall::rebuildRowsFromSnapshots()
+bool SpectrumWaterfall::timeView(const QRect &plot, TimeView *tv) const
 {
-    m_rows.clear();
-    m_displayMax = 1.0f;
-    clearCursor();
+    if (!tv || m_rows.isEmpty() || m_image.isNull() || m_channels <= 0) {
+        return false;
+    }
+    const QRect imgRect = plot.adjusted(1, 1, -1, -1);
+    if (imgRect.width() < 1 || imgRect.height() < 1) {
+        return false;
+    }
 
-    const int K = qMax(1, m_integrate);
-    if (m_snaps.size() < K + 1 || m_channels <= 0) {
+    const int nRows = m_rows.size();
+    const int plotH = imgRect.height();
+    const int visible = qMin(nRows, plotH);
+    if (visible < 1) {
+        return false;
+    }
+
+    // Data always lives in the bottom nRows scanlines of m_image.
+    // Show the newest `visible` lines, 1 source row → 1 dest pixel (no Y stretch).
+    const int srcY = m_image.height() - visible;
+    const int destTop = imgRect.top() + plotH - visible;
+
+    tv->imgRect = imgRect;
+    tv->dest = QRect(imgRect.left(), destTop, imgRect.width(), visible);
+    tv->visible = visible;
+    tv->firstRow = nRows - visible;
+    tv->srcY = srcY;
+    return true;
+}
+
+void SpectrumWaterfall::refreshCursorAfterScroll(bool droppedOldest)
+{
+    if (m_cursorRow < 0) {
+        return;
+    }
+    if (droppedOldest) {
+        m_cursorRow -= 1;
+    }
+    if (m_cursorRow < 0 || m_cursorRow >= m_rows.size()) {
+        clearCursor();
+        return;
+    }
+    if (m_cursorCh < 0 || m_cursorCh >= m_channels) {
+        return;
+    }
+    const Row &r = m_rows[m_cursorRow];
+    const float rate = (m_cursorCh < r.rates.size()) ? r.rates[m_cursorCh] : 0.0f;
+    const quint32 dN = (m_cursorCh < r.deltas.size()) ? r.deltas[m_cursorCh] : 0u;
+    const double e = channelToEnergy(double(m_cursorCh));
+    emit cursorInfoChanged(m_cursorCh, e, rate, dN, r.liveTimeSec,
+                           ageFromNewestSec(m_cursorRow));
+}
+
+void SpectrumWaterfall::appendDisplayRow(Row &&row)
+{
+    const bool droppedOldest = (m_rows.size() >= m_maxRows);
+
+    m_rows.append(std::move(row));
+    while (m_rows.size() > m_maxRows) {
+        m_rows.removeFirst();
+    }
+
+    // Colour map = [0, max over entire history]. Recolour all rows when that
+    // max moves enough (source near detector, peak leaves the buffer, …).
+    // Geometry stays 1:1 — only colours change, not vertical squeeze.
+    const float newMax = matrixMaxRate();
+    const float oldMax = m_displayMax;
+    const bool scaleChanged =
+        (oldMax < 1e-6f)
+        || (newMax > oldMax * (1.0f + kScaleHysteresis))
+        || (newMax < oldMax * (1.0f - kScaleHysteresis));
+
+    if (scaleChanged) {
+        m_displayMax = newMax;
         rebuildImage();
+        refreshCursorAfterScroll(droppedOldest);
         update();
         return;
     }
 
-    const bool useNet = netModeActive();
+    // Scale stable: scroll image + paint only the new bottom line.
+    ensureImage();
+    if (m_image.isNull()) {
+        refreshCursorAfterScroll(droppedOldest);
+        update();
+        return;
+    }
+
+    const int h = m_image.height();
+    const int w = m_image.width();
+    if (h >= 2) {
+        const int bpl = m_image.bytesPerLine();
+        uchar *bits = m_image.bits();
+        std::memmove(bits, bits + bpl, size_t(bpl) * size_t(h - 1));
+    }
+
+    const Row &newest = m_rows.last();
+    auto *line = reinterpret_cast<QRgb *>(m_image.scanLine(h - 1));
+    const int n = qMin(w, newest.rates.size());
+    for (int x = 0; x < w; ++x) {
+        const float rate = (x < n) ? newest.rates[x] : 0.0f;
+        line[x] = rateToColor(rate);
+    }
+
+    refreshCursorAfterScroll(droppedOldest);
+    update();
+}
+
+void SpectrumWaterfall::resetBaselineFromLatest()
+{
+    if (m_snaps.isEmpty()) {
+        m_hasBaseline = false;
+        m_baseline = Snapshot{};
+        m_integrateProgress = 0;
+        return;
+    }
+    m_baseline = m_snaps.last();
+    m_hasBaseline = true;
+    m_integrateProgress = 0;
+}
+
+void SpectrumWaterfall::rebuildRowsFromSnapshots()
+{
+    m_rows.clear();
+    m_displayMax = 1.0f;
+
+    const int K = qMax(1, m_integrate);
+    if (m_snaps.size() < K + 1 || m_channels <= 0) {
+        m_image = QImage();
+        ensureImage();
+        resetBaselineFromLatest();
+        update();
+        return;
+    }
 
     // Non-overlapping bins: snap[i-K] → snap[i], step K.
     for (int i = K; i < m_snaps.size(); i += K) {
-        const Snapshot &prev = m_snaps.at(i - K);
-        const Snapshot &cur = m_snaps.at(i);
-        const qint64 dT = qint64(cur.durationSec) - qint64(prev.durationSec);
-        if (dT <= 0) {
-            continue; // reset or clock went backwards — skip this bin
-        }
-
-        const QVector<quint32> a = useNet ? netCountsFor(prev) : prev.counts;
-        const QVector<quint32> b = useNet ? netCountsFor(cur) : cur.counts;
-        const int n = qMin(m_channels, qMin(a.size(), b.size()));
-
         Row row;
-        row.rates.resize(m_channels);
-        row.deltas.resize(m_channels);
-        row.liveTimeSec = cur.durationSec;
-        row.intervalSec = static_cast<quint32>(dT);
-        row.wallTime = cur.wallTime;
-
-        float rowMax = 0.0f;
-        for (int ch = 0; ch < m_channels; ++ch) {
-            quint32 dN = 0;
-            if (ch < n) {
-                const qint64 d = qint64(b.at(ch)) - qint64(a.at(ch));
-                dN = d > 0 ? static_cast<quint32>(d) : 0u;
-            }
-            row.deltas[ch] = dN;
-            const float rate = float(dN) / float(dT);
-            row.rates[ch] = rate;
-            rowMax = std::max(rowMax, rate);
-        }
-        m_displayMax = std::max(rowMax, m_displayMax * 0.992f);
-        if (m_displayMax < 1e-6f) {
-            m_displayMax = 1e-6f;
+        if (!makeRow(m_snaps.at(i - K), m_snaps.at(i), &row)) {
+            continue; // reset or clock went backwards — skip this bin
         }
         m_rows.append(std::move(row));
     }
 
     while (m_rows.size() > m_maxRows) {
         m_rows.removeFirst();
+    }
+    m_displayMax = matrixMaxRate();
+
+    // Resume incremental updates from the last snap used as a bin end, else latest.
+    if (!m_snaps.isEmpty()) {
+        const int lastEnd = (m_snaps.size() - 1) / K * K;
+        if (lastEnd >= 0 && lastEnd < m_snaps.size()) {
+            m_baseline = m_snaps.at(lastEnd);
+            m_hasBaseline = true;
+            m_integrateProgress = (m_snaps.size() - 1) - lastEnd;
+        } else {
+            resetBaselineFromLatest();
+        }
+    } else {
+        resetBaselineFromLatest();
     }
 
     rebuildImage();
@@ -289,6 +459,11 @@ void SpectrumWaterfall::pushSpectrum(const QVector<quint32> &counts, quint32 dur
         m_snaps.clear();
         m_rows.clear();
         m_channels = n;
+        m_hasBaseline = false;
+        m_baseline = Snapshot{};
+        m_integrateProgress = 0;
+        m_displayMax = 1.0f;
+        m_image = QImage();
         clearCursor();
         if (m_xMax <= m_xMin || m_xMax > n) {
             m_xMin = 0;
@@ -302,12 +477,36 @@ void SpectrumWaterfall::pushSpectrum(const QVector<quint32> &counts, quint32 dur
     snap.wallTime = QDateTime::currentDateTime();
     m_snaps.append(std::move(snap));
 
-    // Keep enough snaps for maxRows display bins of size integrate.
     while (m_snaps.size() > maxSnaps()) {
         m_snaps.removeFirst();
     }
 
-    rebuildRowsFromSnapshots();
+    const Snapshot &cur = m_snaps.last();
+
+    if (!m_hasBaseline) {
+        m_baseline = cur;
+        m_hasBaseline = true;
+        m_integrateProgress = 0;
+        ensureImage();
+        update();
+        return;
+    }
+
+    ++m_integrateProgress;
+    if (m_integrateProgress < m_integrate) {
+        return;
+    }
+    m_integrateProgress = 0;
+
+    Row row;
+    if (!makeRow(m_baseline, cur, &row)) {
+        // Spectrum reset or live-time did not advance — resync baseline.
+        m_baseline = cur;
+        return;
+    }
+
+    m_baseline = cur;
+    appendDisplayRow(std::move(row));
 }
 
 int SpectrumWaterfall::ageFromNewestSec(int rowIndex) const
@@ -335,24 +534,18 @@ double SpectrumWaterfall::channelAtPlotX(int x, const QRect &plot) const
 
 int SpectrumWaterfall::rowAtPlotY(int y, const QRect &plot) const
 {
-    const int nRows = m_rows.size();
-    if (nRows <= 0 || m_image.isNull() || m_image.height() <= 0) {
+    TimeView tv;
+    if (!timeView(plot, &tv)) {
         return -1;
     }
-    const QRect imgRect = plot.adjusted(1, 1, -1, -1);
-    if (y < imgRect.top() || y > imgRect.bottom()) {
+    if (y < tv.dest.top() || y > tv.dest.bottom()) {
         return -1;
     }
-    const int h = std::max(1, imgRect.height());
-    const double ty = (double(y) - imgRect.top()) / double(std::max(1, h - 1));
-    const int imgY =
-        std::clamp(int(std::lround(ty * (m_image.height() - 1))), 0, m_image.height() - 1);
-    const int y0 = m_maxRows - nRows;
-    const int dataY = imgY - y0;
-    if (dataY < 0 || dataY >= nRows) {
+    const int local = y - tv.dest.top(); // 0 = oldest visible
+    if (local < 0 || local >= tv.visible) {
         return -1;
     }
-    return dataY;
+    return tv.firstRow + local;
 }
 
 void SpectrumWaterfall::clearCursor()
@@ -459,14 +652,12 @@ void SpectrumWaterfall::drawCursor(QPainter &p, const QRect &plot) const
 
     int y = plot.center().y();
     if (hover) {
-        const int nRows = m_rows.size();
-        const int y0img = m_maxRows - nRows;
-        const int imgY = y0img + m_cursorRow;
-        const double ty = m_image.height() > 1
-            ? double(imgY) / double(m_image.height() - 1)
-            : 0.0;
-        y = imgRect.top() + int(std::lround(ty * (imgRect.height() - 1)));
-        p.drawLine(plot.left(), y, plot.right(), y);
+        TimeView tv;
+        if (timeView(plot, &tv) && m_cursorRow >= tv.firstRow
+            && m_cursorRow < tv.firstRow + tv.visible) {
+            y = tv.dest.top() + (m_cursorRow - tv.firstRow);
+            p.drawLine(plot.left(), y, plot.right(), y);
+        }
     }
 
     const int rowIdx = hover ? m_cursorRow : (m_rows.isEmpty() ? -1 : m_rows.size() - 1);
@@ -555,9 +746,13 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
         return;
     }
 
-    const QRectF src(x0, 0.0, x1 - x0, double(m_image.height()));
+    // Y: 1:1 bottom-aligned (no vertical squeeze). X: stretch to plot (energy zoom).
+    TimeView tv;
     p.setRenderHint(QPainter::SmoothPixmapTransform, false);
-    p.drawImage(plot.adjusted(1, 1, -1, -1), m_image, src);
+    if (timeView(plot, &tv)) {
+        const QRectF src(x0, double(tv.srcY), x1 - x0, double(tv.visible));
+        p.drawImage(tv.dest, m_image, src);
+    }
 
     const QFontMetrics fm = p.fontMetrics();
 
@@ -575,54 +770,42 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
         p.drawText(br.left() + pad, br.top() + pad + fm.ascent(), badge);
     }
 
-    // Y axis: wall-clock HH:mm for oldest / mid / newest rows (newest at bottom).
-    {
-        const int nRows = m_rows.size();
-        const QRect imgRect = plot.adjusted(1, 1, -1, -1);
-        if (nRows > 0 && imgRect.height() > 1 && m_image.height() > 0) {
-            QVector<int> tickRows;
-            tickRows.append(0); // oldest
-            if (nRows >= 3) {
-                tickRows.append(nRows / 2);
-            }
-            if (nRows >= 2) {
-                tickRows.append(nRows - 1); // newest
-            }
+    // Y axis: wall-clock HH:mm for oldest / mid / newest *visible* rows.
+    if (timeView(plot, &tv) && tv.visible > 0) {
+        QVector<int> tickRows;
+        tickRows.append(tv.firstRow); // oldest visible
+        if (tv.visible >= 3) {
+            tickRows.append(tv.firstRow + tv.visible / 2);
+        }
+        if (tv.visible >= 2) {
+            tickRows.append(tv.firstRow + tv.visible - 1); // newest
+        }
 
-            const int y0img = m_maxRows - nRows;
+        p.setPen(QColor(170, 172, 180));
+        QString lastLabel;
+        for (int rowIdx : tickRows) {
+            if (rowIdx < 0 || rowIdx >= m_rows.size()) {
+                continue;
+            }
+            const QDateTime wt = m_rows.at(rowIdx).wallTime;
+            if (!wt.isValid()) {
+                continue;
+            }
+            const QString label = wt.toString(QStringLiteral("HH:mm"));
+            if (label == lastLabel) {
+                continue;
+            }
+            lastLabel = label;
+
+            int y = tv.dest.top() + (rowIdx - tv.firstRow);
+            y = std::clamp(y, tv.imgRect.top() + fm.ascent() / 2,
+                           tv.imgRect.bottom() - fm.descent());
+
+            p.setPen(QColor(55, 58, 64));
+            p.drawLine(plot.left(), y, plot.left() + 4, y);
             p.setPen(QColor(170, 172, 180));
-            QString lastLabel;
-            for (int rowIdx : tickRows) {
-                if (rowIdx < 0 || rowIdx >= nRows) {
-                    continue;
-                }
-                const QDateTime wt = m_rows.at(rowIdx).wallTime;
-                if (!wt.isValid()) {
-                    continue;
-                }
-                const QString label = wt.toString(QStringLiteral("HH:mm"));
-                // Skip duplicate consecutive labels (short runs / same minute).
-                if (label == lastLabel) {
-                    continue;
-                }
-                lastLabel = label;
-
-                const int imgY = y0img + rowIdx;
-                const double ty = m_image.height() > 1
-                    ? double(imgY) / double(m_image.height() - 1)
-                    : 0.0;
-                int y = imgRect.top()
-                    + int(std::lround(ty * (imgRect.height() - 1)));
-                y = std::clamp(y, imgRect.top() + fm.ascent() / 2,
-                               imgRect.bottom() - fm.descent());
-
-                // Light tick into the plot.
-                p.setPen(QColor(55, 58, 64));
-                p.drawLine(plot.left(), y, plot.left() + 4, y);
-                p.setPen(QColor(170, 172, 180));
-                const int tw = fm.horizontalAdvance(label);
-                p.drawText(plot.left() - 6 - tw, y + fm.ascent() / 2 - 1, label);
-            }
+            const int tw = fm.horizontalAdvance(label);
+            p.drawText(plot.left() - 6 - tw, y + fm.ascent() / 2 - 1, label);
         }
     }
 

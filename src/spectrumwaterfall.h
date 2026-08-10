@@ -5,9 +5,14 @@
 #include <QVector>
 #include <QWidget>
 
-// Time × energy waterfall under the spectrum (SDR-style).
-// Stores live spectrum snapshots; display mode Live or Net (Live − BG) rebuilds rate rows.
+// Time × energy waterfall under the spectrum (SDR-style scroll).
+// Stores live spectrum snapshots; display mode Live or Net (Live − BG).
 // Newest row at the bottom; older rows scroll upward.
+// Time axis is 1:1 (one history row = one screen pixel, bottom-aligned) so
+// history only translates — never vertically squeezed into the pane.
+// Colour map = [0, max rate over the history matrix]; when that max changes
+// enough (source near detector, peak ages out), the whole image is recoloured.
+// Otherwise only the new bottom line is painted.
 class SpectrumWaterfall : public QWidget {
     Q_OBJECT
 public:
@@ -71,13 +76,30 @@ private:
         QDateTime wallTime;
     };
 
+    /// 1:1 bottom-aligned time view into m_image / m_rows.
+    struct TimeView {
+        QRect imgRect;   // inner plot (1 px frame inset)
+        QRect dest;      // where waterfall pixels are drawn (1:1 Y)
+        int visible = 0; // dest height = number of image rows shown
+        int firstRow = 0; // m_rows index at top of dest
+        int srcY = 0;    // top image scanline drawn
+    };
+
     QRect plotRect() const;
     bool hasEnergyAxis() const;
     double channelToEnergy(double channel) const;
     QRgb rateToColor(float rate) const;
+    void ensureImage();
     void rebuildImage();
     void rebuildRowsFromSnapshots();
+    void appendDisplayRow(Row &&row);
+    bool makeRow(const Snapshot &prev, const Snapshot &cur, Row *out) const;
     QVector<quint32> netCountsFor(const Snapshot &snap) const;
+    /// Max rate over all cells currently in m_rows (floor 1e-6).
+    float matrixMaxRate() const;
+    /// Fill tv for current plot; false if nothing to show.
+    bool timeView(const QRect &plot, TimeView *tv) const;
+    void refreshCursorAfterScroll(bool droppedOldest);
     void clearCursor();
     void setCursorFromPos(const QPoint &pos);
     int rowAtPlotY(int y, const QRect &plot) const;
@@ -85,6 +107,7 @@ private:
     int ageFromNewestSec(int rowIndex) const;
     void drawCursor(QPainter &p, const QRect &plot) const;
     bool netModeActive() const;
+    void resetBaselineFromLatest();
 
     static constexpr int kMarginLeft = 64;
     static constexpr int kMarginRight = 14;
@@ -92,14 +115,21 @@ private:
     static constexpr int kMarginBottom = 22;
     static constexpr int kDefaultMaxRows = 240;
     static constexpr int kMaxIntegrate = 32;
+    /// Relative change of matrix max before full recolour (~Poisson noise filter).
+    static constexpr float kScaleHysteresis = 0.02f;
 
     int maxSnaps() const { return m_maxRows * m_integrate + 1; }
 
-    QVector<Snapshot> m_snaps; // newest at back (includes first baseline snap)
-    QVector<Row> m_rows;       // rate rows (integrate bins)
+    QVector<Snapshot> m_snaps; // newest at back (kept for mode/BG rebuild)
+    QVector<Row> m_rows;       // rate rows (newest at back)
     int m_maxRows = kDefaultMaxRows;
     int m_integrate = 1; // polls per display row
     int m_channels = 0;
+
+    /// Incremental path: baseline snapshot + polls since last display row.
+    bool m_hasBaseline = false;
+    Snapshot m_baseline;
+    int m_integrateProgress = 0;
 
     DisplayMode m_mode = DisplayMode::Live;
     QVector<quint32> m_bgCounts;
@@ -111,6 +141,7 @@ private:
     float m_a1 = 0;
     float m_a2 = 0;
 
+    /// Colour map top: max rate over the history matrix (0 … m_displayMax).
     float m_displayMax = 1.0f;
     QImage m_image;
 
