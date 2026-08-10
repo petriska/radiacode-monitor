@@ -1,6 +1,6 @@
 
 # RadiaCode monitor
-<img width="1102" height="867" alt="radiacodeGUI030" src="https://github.com/user-attachments/assets/e54f3985-8eed-4eb4-88f7-e8a00032a740" />
+<img width="1102" height="867" alt="radiacodeGUI030" src="https://github.com/user-attachments/assets/d26edc4b-1f68-4a23-a491-a7416673766b" />
 
 Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) detectors using the **QtRadiacode** library.
 
