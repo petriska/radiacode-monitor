@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-10
+
 ### Added
 
 - **Acquisition run** (Live panel): stop by **device live time (s)** or **total
@@ -24,6 +26,19 @@
 - **UI layout** (1080p-friendly): Device bar moved next to Live (above ROI
   controls); Live form drops Serial/Firmware/Dose rate (serial/FW on Device
   row; dose still updated internally); Messages/log panel removed (status bar only).
+
+### Fixed
+
+- Waterfall **time axis 1:1** (one history row = one screen pixel, bottom-aligned)
+  so history **scrolls** instead of being vertically squeezed into the pane.
+- Waterfall **colour scale** uses max rate over the history matrix; full recolour
+  only when that max changes (~2% hysteresis), e.g. when a source is brought near.
+
+### Notes
+
+- Library pin for this release: **qtradiacode `v0.1.3`** (unchanged from 0.2.2)
+- Longer spectrogram history, scroll-back, save/load, and region extract are
+  planned for a later release — not in 0.3.0.
 
 ## [0.2.2] — 2026-07-29
 
