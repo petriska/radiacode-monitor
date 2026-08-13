@@ -1630,6 +1630,10 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
         p.drawText(x - tw / 2, plot.bottom() + fm.ascent() + 2, label);
     }
 
+    // Cursor first; selection (and its caption) on top so it is not hidden by
+    // the "Live · E = …" hover bubble.
+    if (!m_selectDragging) {
+        drawCursor(p, plot);
+    }
     drawSelection(p, plot);
-    drawCursor(p, plot);
 }
