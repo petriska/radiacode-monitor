@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QImage>
+#include <QPoint>
 #include <QVector>
 #include <QWidget>
 
@@ -73,6 +74,18 @@ public:
     void setRecorder(SpectrogramRecorder *recorder);
     SpectrogramRecorder *recorder() const { return m_recorder; }
 
+    /// Rectangle selection in buffer coordinates (E1). Channels [ch0, ch1), rows [row0, row1].
+    struct Selection {
+        int ch0 = 0;
+        int ch1 = 0;   // exclusive
+        int row0 = 0;  // inclusive (oldest side of box)
+        int row1 = 0;  // inclusive (newest side of box)
+        bool valid = false;
+    };
+    bool hasSelection() const { return m_selection.valid; }
+    Selection selection() const { return m_selection; }
+    void clearSelection();
+
     void clear();
 
     /// Vertical highlight linked from spectrum hover (−1 = none). Does not emit signals.
@@ -84,15 +97,20 @@ signals:
                            quint32 liveTimeSec, int ageFromNewestSec);
     void followLiveChanged(bool following);
     void scrollChanged(int scrollFromNewest, int maxScroll);
+    /// Emitted when the analysis rectangle is set, cleared, or adjusted after history trim.
+    void selectionChanged(bool hasSelection, int ch0, int ch1, int row0, int row1);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
     struct Snapshot {
@@ -140,8 +158,13 @@ private:
     double channelAtPlotX(int x, const QRect &plot) const;
     int ageFromNewestSec(int rowIndex) const;
     void drawCursor(QPainter &p, const QRect &plot) const;
+    void drawSelection(QPainter &p, const QRect &plot) const;
     bool netModeActive() const;
     void emitScrollSignals();
+    void emitSelectionChanged();
+    void setSelectionFromCorners(const QPoint &a, const QPoint &b);
+    void adjustSelectionAfterHistoryTrim(int dropped);
+    QRect selectionPixelRect(const TimeView &tv) const;
     /// Rasterize rate rows [firstRow, firstRow+nRows) and channels [ch0, ch1) → RGB image.
     QImage renderRatesToImage(int firstRow, int nRows, int ch0, int ch1) const;
     void applyPngMetadata(QImage *img, int firstRow, int lastRow, int ch0, int ch1,
@@ -158,6 +181,7 @@ private:
     static constexpr int kMinRows = 64;
     static constexpr int kMaxRowsCap = 28800; // 8 h @ 1 s / row
     static constexpr float kScaleHysteresis = 0.02f;
+    static constexpr int kSelectDragThresholdPx = 4;
 
     QVector<Row> m_rows; // oldest at front, newest at back
     int m_historyMinutes = kDefaultHistoryMinutes;
@@ -192,4 +216,11 @@ private:
 
     QString m_deviceSerial;
     SpectrogramRecorder *m_recorder = nullptr; // not owned
+
+    // Analysis rectangle (buffer coords). E1 — extract spectrum/MCS in E2.
+    Selection m_selection;
+    bool m_selectDragging = false;
+    bool m_selectDragMoved = false;
+    QPoint m_selectPressPos;
+    QPoint m_selectCurrPos;
 };

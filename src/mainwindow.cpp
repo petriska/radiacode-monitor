@@ -416,6 +416,20 @@ MainWindow::MainWindow(QWidget *parent)
                 tr("Spectrum: ch %1 · N = %2").arg(channel).arg(counts), 2000);
         }
     });
+    connect(m_waterfall, &SpectrumWaterfall::selectionChanged, this,
+            [this](bool has, int ch0, int ch1, int row0, int row1) {
+        if (!has) {
+            return;
+        }
+        statusBar()->showMessage(
+            tr("Selection: ch %1–%2 · rows %3–%4 (%5 rows) — extract spectrum/MCS next")
+                .arg(ch0)
+                .arg(ch1 - 1)
+                .arg(row0)
+                .arg(row1)
+                .arg(row1 - row0 + 1),
+            4000);
+    });
     connect(m_waterfall, &SpectrumWaterfall::cursorInfoChanged, this,
             [this](int channel, double energyKeV, float rateCps, quint32 deltaCounts,
                    quint32 liveTimeSec, int ageFromNewestSec) {

@@ -26,6 +26,13 @@
   `.rcsg.gz`; **Keep recordings** (7…365 days) prunes older files. Load accepts
   `.rcsg` and `.rcsg.gz`.
 
+### Added
+
+- Waterfall **rectangle selection (E1):** drag with left button to mark energy × time
+  region; caption shows keV/channels, row count, wall-clock span. Esc / click /
+  context menu **Clear selection**. Selection tracks history trim. Ready for
+  spectrum/MCS extract (E2).
+
 ### Changed
 
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer
