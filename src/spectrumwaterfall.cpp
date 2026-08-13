@@ -221,7 +221,7 @@ void SpectrumWaterfall::adjustSelectionAfterHistoryTrim(int dropped)
     emitSelectionChanged();
 }
 
-void SpectrumWaterfall::setSelectionFromCorners(const QPoint &a, const QPoint &b)
+void SpectrumWaterfall::setSelectionFromCorners(const QPoint &a, const QPoint &b, bool notify)
 {
     const QRect plot = plotRect();
     TimeView tv;
@@ -242,11 +242,13 @@ void SpectrumWaterfall::setSelectionFromCorners(const QPoint &a, const QPoint &b
     chA = std::clamp(chA, 0, m_channels - 1);
     chB = std::clamp(chB, 0, m_channels - 1);
 
-    int rowA = rowAtPlotY(pa.y(), plot);
-    int rowB = rowAtPlotY(pb.y(), plot);
-    if (rowA < 0 || rowB < 0) {
-        return;
-    }
+    // Prefer direct mapping from dest Y (always works after clamp).
+    auto rowFromY = [&](int y) -> int {
+        const int local = std::clamp(y - tv.dest.top(), 0, tv.visible - 1);
+        return tv.firstRow + local;
+    };
+    const int rowA = rowFromY(pa.y());
+    const int rowB = rowFromY(pb.y());
 
     Selection s;
     s.ch0 = qMin(chA, chB);
@@ -255,7 +257,9 @@ void SpectrumWaterfall::setSelectionFromCorners(const QPoint &a, const QPoint &b
     s.row1 = qMax(rowA, rowB);
     s.valid = (s.ch1 > s.ch0) && (s.row1 >= s.row0);
     m_selection = s;
-    emitSelectionChanged();
+    if (notify) {
+        emitSelectionChanged();
+    }
 }
 
 void SpectrumWaterfall::setBackground(const QVector<quint32> &counts, quint32 durationSec)
@@ -763,6 +767,7 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
         m_selectPressPos = event->pos();
         m_selectCurrPos = event->pos();
         setFocus(Qt::MouseFocusReason);
+        grabMouse(); // reliable move events while button is held
         event->accept();
         return;
     }
@@ -771,13 +776,14 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
 
 void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
 {
-    if (m_selectDragging && (event->buttons() & Qt::LeftButton)) {
+    if (m_selectDragging) {
         m_selectCurrPos = event->pos();
         const QPoint d = m_selectCurrPos - m_selectPressPos;
         if (d.manhattanLength() >= kSelectDragThresholdPx) {
             m_selectDragMoved = true;
-            setSelectionFromCorners(m_selectPressPos, m_selectCurrPos);
-            update();
+            // Update geometry + caption every move; notify listeners only on release.
+            setSelectionFromCorners(m_selectPressPos, m_selectCurrPos, false);
+            repaint(); // immediate redraw so caption tracks the rubber-band
         }
         event->accept();
         return;
@@ -789,9 +795,12 @@ void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
 void SpectrumWaterfall::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && m_selectDragging) {
+        if (mouseGrabber() == this) {
+            releaseMouse();
+        }
         m_selectDragging = false;
         if (m_selectDragMoved) {
-            setSelectionFromCorners(m_selectPressPos, event->pos());
+            setSelectionFromCorners(m_selectPressPos, event->pos(), true);
             update();
         } else {
             // Click without drag: clear selection.

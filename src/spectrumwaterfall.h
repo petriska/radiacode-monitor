@@ -162,7 +162,8 @@ private:
     bool netModeActive() const;
     void emitScrollSignals();
     void emitSelectionChanged();
-    void setSelectionFromCorners(const QPoint &a, const QPoint &b);
+    /// Map two widget points to channel/row selection. notify=false while dragging.
+    void setSelectionFromCorners(const QPoint &a, const QPoint &b, bool notify = true);
     void adjustSelectionAfterHistoryTrim(int dropped);
     QRect selectionPixelRect(const TimeView &tv) const;
     /// Rasterize rate rows [firstRow, firstRow+nRows) and channels [ch0, ch1) → RGB image.
