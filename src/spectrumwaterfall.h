@@ -51,6 +51,15 @@ public:
     int scrollFromNewest() const { return m_scrollFromNewest; }
     bool isFollowingLive() const { return m_scrollFromNewest == 0; }
     void followLive();
+    /// Jump viewport to the oldest data still in the history buffer.
+    void goToOldest();
+
+    /// Device serial (and optional label) for PNG export metadata.
+    void setDeviceSerial(const QString &serial);
+    QString deviceSerial() const { return m_deviceSerial; }
+
+    /// Export the current on-screen spectrogram view as a lossless PNG (file dialog).
+    bool exportViewAsPng(QWidget *dialogParent = nullptr);
 
     void clear();
 
@@ -71,6 +80,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     struct Snapshot {
@@ -120,6 +130,7 @@ private:
     void drawCursor(QPainter &p, const QRect &plot) const;
     bool netModeActive() const;
     void emitScrollSignals();
+    void applyPngMetadata(QImage *img) const;
 
     static constexpr int kMarginLeft = 64;
     static constexpr int kMarginRight = 14;
@@ -163,4 +174,6 @@ private:
     int m_cursorCh = -1;
     int m_cursorRow = -1;
     int m_linkedCh = -1;
+
+    QString m_deviceSerial;
 };

@@ -1,8 +1,15 @@
 #include "spectrumwaterfall.h"
 
+#include <QApplication>
+#include <QContextMenuEvent>
 #include <QEvent>
+#include <QFileDialog>
+#include <QImageWriter>
+#include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStandardPaths>
 #include <QWheelEvent>
 #include <QtMath>
 
@@ -22,6 +29,7 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
     setToolTip(tr(
         "Spectrogram / waterfall: count rate per channel over time (ΔN / Δt).\n"
         "Mouse wheel: scroll history · Double-click: jump to live.\n"
+        "Right-click: Follow live, Go to oldest, Export view as PNG.\n"
         "Time is 1:1 (one row = one pixel). Colour scale = 0 … max over history.\n"
         "X range follows spectrum zoom. Hover for energy, rate, ΔN, time."));
 }
@@ -84,6 +92,16 @@ void SpectrumWaterfall::setScrollFromNewest(int rows)
 void SpectrumWaterfall::followLive()
 {
     setScrollFromNewest(0);
+}
+
+void SpectrumWaterfall::goToOldest()
+{
+    setScrollFromNewest(maxScroll());
+}
+
+void SpectrumWaterfall::setDeviceSerial(const QString &serial)
+{
+    m_deviceSerial = serial.trimmed();
 }
 
 void SpectrumWaterfall::clampScroll()
@@ -648,6 +666,151 @@ void SpectrumWaterfall::mouseDoubleClickEvent(QMouseEvent *event)
         return;
     }
     QWidget::mouseDoubleClickEvent(event);
+}
+
+void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
+{
+    QMenu menu(this);
+
+    QAction *followAct = menu.addAction(tr("Follow live"));
+    followAct->setEnabled(!isFollowingLive());
+    followAct->setToolTip(tr("Jump to the newest spectrogram data."));
+
+    QAction *oldestAct = menu.addAction(tr("Go to oldest"));
+    oldestAct->setEnabled(!m_rows.isEmpty() && maxScroll() > 0
+                          && m_scrollFromNewest < maxScroll());
+    oldestAct->setToolTip(
+        tr("Show the oldest data still in the history buffer."));
+
+    menu.addSeparator();
+
+    QAction *pngAct = menu.addAction(tr("Export view as PNG…"));
+    pngAct->setEnabled(!m_rows.isEmpty());
+    pngAct->setToolTip(
+        tr("Save the current on-screen spectrogram as a lossless PNG\n"
+           "(includes device serial and time range in image metadata)."));
+
+    QAction *chosen = menu.exec(event->globalPos());
+    if (chosen == followAct) {
+        followLive();
+    } else if (chosen == oldestAct) {
+        goToOldest();
+    } else if (chosen == pngAct) {
+        exportViewAsPng(window());
+    }
+    event->accept();
+}
+
+void SpectrumWaterfall::applyPngMetadata(QImage *img) const
+{
+    if (!img) {
+        return;
+    }
+
+    const QString app = QStringLiteral("Radiacode Monitor %1")
+                            .arg(QApplication::applicationVersion());
+    img->setText(QStringLiteral("Software"), app);
+    img->setText(QStringLiteral("Title"), tr("Spectrogram view"));
+
+    if (!m_deviceSerial.isEmpty()) {
+        img->setText(QStringLiteral("Serial"), m_deviceSerial);
+        img->setText(QStringLiteral("Device"), m_deviceSerial);
+    }
+
+    img->setText(QStringLiteral("View"),
+                 netModeActive() ? QStringLiteral("Net") : QStringLiteral("Live"));
+    img->setText(QStringLiteral("FollowingLive"),
+                 isFollowingLive() ? QStringLiteral("yes") : QStringLiteral("no"));
+    img->setText(QStringLiteral("IntegratePolls"), QString::number(m_integrate));
+    img->setText(QStringLiteral("HistoryMinutes"), QString::number(m_historyMinutes));
+    img->setText(QStringLiteral("Channels"), QString::number(m_channels));
+    img->setText(QStringLiteral("DisplayMaxCps"),
+                 QString::number(double(m_displayMax), 'g', 6));
+
+    if (hasEnergyAxis()) {
+        img->setText(QStringLiteral("Calibration"),
+                     QStringLiteral("a0=%1 a1=%2 a2=%3")
+                         .arg(double(m_a0), 0, 'g', 8)
+                         .arg(double(m_a1), 0, 'g', 8)
+                         .arg(double(m_a2), 0, 'g', 8));
+    }
+
+    TimeView tv;
+    if (timeView(plotRect(), &tv) && tv.visible > 0) {
+        const QDateTime t0 = m_rows.at(tv.firstRow).wallTime;
+        const QDateTime t1 = m_rows.at(tv.lastRow).wallTime;
+        if (t0.isValid() && t1.isValid()) {
+            img->setText(QStringLiteral("TimeRange"),
+                         QStringLiteral("%1 … %2")
+                             .arg(t0.toString(Qt::ISODate), t1.toString(Qt::ISODate)));
+            img->setText(QStringLiteral("TimeStart"), t0.toString(Qt::ISODate));
+            img->setText(QStringLiteral("TimeEnd"), t1.toString(Qt::ISODate));
+        }
+        img->setText(QStringLiteral("VisibleRows"), QString::number(tv.visible));
+        img->setText(QStringLiteral("BufferRows"), QString::number(m_rows.size()));
+    }
+
+    img->setText(QStringLiteral("Description"),
+                 tr("Lossless PNG of the on-screen spectrogram view. "
+                    "Pixel colours are display-scaled rates, not raw cps."));
+}
+
+bool SpectrumWaterfall::exportViewAsPng(QWidget *dialogParent)
+{
+    if (m_rows.isEmpty()) {
+        return false;
+    }
+
+    // Ensure the colour cache matches the current view before grab.
+    rebuildViewportImage();
+    update();
+
+    QString defaultName = QStringLiteral("spectrogram");
+    if (!m_deviceSerial.isEmpty()) {
+        defaultName += QLatin1Char('-') + m_deviceSerial;
+    }
+    TimeView tv;
+    if (timeView(plotRect(), &tv) && tv.visible > 0) {
+        const QDateTime t1 = m_rows.at(tv.lastRow).wallTime;
+        if (t1.isValid()) {
+            defaultName += QLatin1Char('-')
+                + t1.toString(QStringLiteral("yyyyMMdd-HHmmss"));
+        }
+    }
+    defaultName += QStringLiteral(".png");
+
+    const QString startDir =
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    const QString path = QFileDialog::getSaveFileName(
+        dialogParent ? dialogParent : this,
+        tr("Export spectrogram view as PNG"),
+        startDir.isEmpty() ? defaultName : (startDir + QLatin1Char('/') + defaultName),
+        tr("PNG images (*.png)"));
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    QImage img = grab().toImage();
+    if (img.isNull()) {
+        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Export PNG"),
+                             tr("Could not capture the spectrogram view."));
+        return false;
+    }
+
+    applyPngMetadata(&img);
+
+    QImageWriter writer(path, "png");
+    // Copy text keys onto the writer as well (some readers prefer writer path).
+    const auto keys = img.textKeys();
+    for (const QString &key : keys) {
+        writer.setText(key, img.text(key));
+    }
+    if (!writer.write(img)) {
+        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Export PNG"),
+                             tr("Failed to write PNG:\n%1").arg(writer.errorString()));
+        return false;
+    }
+    return true;
 }
 
 void SpectrumWaterfall::wheelEvent(QWheelEvent *event)

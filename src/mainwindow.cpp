@@ -1212,6 +1212,9 @@ void MainWindow::onConnected()
     m_fwLabel->setText(m_device->firmwareVersion().isEmpty()
                            ? QStringLiteral("—")
                            : m_device->firmwareVersion());
+    if (m_waterfall) {
+        m_waterfall->setDeviceSerial(m_device->serialNumber());
+    }
     m_statusLabel->setText(tr("Connected"));
     m_statusLabel->setToolTip(
         tr("Serial: %1\nFirmware: %2")
@@ -1277,6 +1280,7 @@ void MainWindow::onDisconnected()
     m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
     if (m_waterfall) {
+        m_waterfall->setDeviceSerial(QString());
         m_waterfall->clear();
     }
     m_hasSpectrum = false;

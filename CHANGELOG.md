@@ -9,6 +9,9 @@
 - **Scroll history**: mouse wheel on waterfall pans time; **Follow live** button and
   double-click jump back to newest data. Badge shows Live/Net and “hist” when paused.
 - Larger default spectrum/waterfall splitter share for the spectrogram pane.
+- Waterfall **context menu** (right-click): **Follow live**, **Go to oldest**,
+  **Export view as PNG…** (lossless; metadata includes Serial, time range, Live/Net,
+  calibration, integrate).
 
 ### Changed
 
