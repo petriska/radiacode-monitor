@@ -164,8 +164,11 @@ private:
     void emitSelectionChanged();
     /// Map two widget points to channel/row selection. notify=false while dragging.
     void setSelectionFromCorners(const QPoint &a, const QPoint &b, bool notify = true);
+    void moveSelectionBy(int dCh, int dRow, bool notify);
     void adjustSelectionAfterHistoryTrim(int dropped);
     QRect selectionPixelRect(const TimeView &tv) const;
+    bool selectionContainsWidgetPos(const QPoint &pos) const;
+    int rowFromWidgetY(int y, const TimeView &tv) const;
     /// Rasterize rate rows [firstRow, firstRow+nRows) and channels [ch0, ch1) → RGB image.
     QImage renderRatesToImage(int firstRow, int nRows, int ch0, int ch1) const;
     void applyPngMetadata(QImage *img, int firstRow, int lastRow, int ch0, int ch1,
@@ -220,8 +223,12 @@ private:
 
     // Analysis rectangle (buffer coords). E1 — extract spectrum/MCS in E2.
     Selection m_selection;
-    bool m_selectDragging = false;
+    bool m_selectDragging = false;   // creating a new box
+    bool m_selectMoving = false;     // translating existing box
     bool m_selectDragMoved = false;
     QPoint m_selectPressPos;
     QPoint m_selectCurrPos;
+    Selection m_moveOrig;            // selection at move start
+    int m_movePressCh = 0;
+    int m_movePressRow = 0;
 };
