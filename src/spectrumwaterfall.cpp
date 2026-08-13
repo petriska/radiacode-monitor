@@ -960,54 +960,55 @@ void SpectrumWaterfall::drawSelection(QPainter &p, const QRect &plot) const
     p.setPen(QPen(QColor(255, 210, 80, 230), 1, Qt::SolidLine));
     p.drawRect(r.adjusted(0, 0, -1, -1));
 
-    // Caption with energy / channel and time span when finalized.
-    if (m_selection.valid && !m_selectDragging) {
-        const double e0 = channelToEnergy(double(m_selection.ch0));
-        const double e1 = channelToEnergy(double(m_selection.ch1));
-        QString cap;
-        if (hasEnergyAxis()) {
-            cap = tr("%1–%2 keV · ch %3–%4 · %5 rows")
-                      .arg(e0, 0, 'f', 1)
-                      .arg(e1, 0, 'f', 1)
-                      .arg(m_selection.ch0)
-                      .arg(m_selection.ch1 - 1)
-                      .arg(m_selection.row1 - m_selection.row0 + 1);
-        } else {
-            cap = tr("ch %1–%2 · %3 rows")
-                      .arg(m_selection.ch0)
-                      .arg(m_selection.ch1 - 1)
-                      .arg(m_selection.row1 - m_selection.row0 + 1);
-        }
-        if (m_selection.row0 >= 0 && m_selection.row1 < m_rows.size()) {
-            const QDateTime t0 = m_rows.at(m_selection.row0).wallTime;
-            const QDateTime t1 = m_rows.at(m_selection.row1).wallTime;
-            if (t0.isValid() && t1.isValid()) {
-                cap += tr(" · %1–%2")
-                           .arg(t0.toString(QStringLiteral("HH:mm:ss")),
-                                t1.toString(QStringLiteral("HH:mm:ss")));
-            }
-        }
-        const QFontMetrics fm(p.font());
-        const int pad = 4;
-        const int tw = fm.horizontalAdvance(cap) + 2 * pad;
-        const int th = fm.height() + 2 * pad;
-        int bx = r.left();
-        int by = r.top() - th - 2;
-        if (by < plot.top() + 2) {
-            by = r.bottom() + 2;
-        }
-        if (bx + tw > plot.right()) {
-            bx = plot.right() - tw;
-        }
-        if (bx < plot.left()) {
-            bx = plot.left();
-        }
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(20, 22, 28, 210));
-        p.drawRoundedRect(QRect(bx, by, tw, th), 3, 3);
-        p.setPen(QColor(255, 220, 140));
-        p.drawText(bx + pad, by + pad + fm.ascent(), cap);
+    // Caption with energy / channel and time span — updates live while dragging.
+    if (!m_selection.valid) {
+        return;
     }
+    const double e0 = channelToEnergy(double(m_selection.ch0));
+    const double e1 = channelToEnergy(double(m_selection.ch1));
+    QString cap;
+    if (hasEnergyAxis()) {
+        cap = tr("%1–%2 keV · ch %3–%4 · %5 rows")
+                  .arg(e0, 0, 'f', 1)
+                  .arg(e1, 0, 'f', 1)
+                  .arg(m_selection.ch0)
+                  .arg(m_selection.ch1 - 1)
+                  .arg(m_selection.row1 - m_selection.row0 + 1);
+    } else {
+        cap = tr("ch %1–%2 · %3 rows")
+                  .arg(m_selection.ch0)
+                  .arg(m_selection.ch1 - 1)
+                  .arg(m_selection.row1 - m_selection.row0 + 1);
+    }
+    if (m_selection.row0 >= 0 && m_selection.row1 < m_rows.size()) {
+        const QDateTime t0 = m_rows.at(m_selection.row0).wallTime;
+        const QDateTime t1 = m_rows.at(m_selection.row1).wallTime;
+        if (t0.isValid() && t1.isValid()) {
+            cap += tr(" · %1–%2")
+                       .arg(t0.toString(QStringLiteral("HH:mm:ss")),
+                            t1.toString(QStringLiteral("HH:mm:ss")));
+        }
+    }
+    const QFontMetrics fm(p.font());
+    const int pad = 4;
+    const int tw = fm.horizontalAdvance(cap) + 2 * pad;
+    const int th = fm.height() + 2 * pad;
+    int bx = r.left();
+    int by = r.top() - th - 2;
+    if (by < plot.top() + 2) {
+        by = r.bottom() + 2;
+    }
+    if (bx + tw > plot.right()) {
+        bx = plot.right() - tw;
+    }
+    if (bx < plot.left()) {
+        bx = plot.left();
+    }
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(20, 22, 28, 210));
+    p.drawRoundedRect(QRect(bx, by, tw, th), 3, 3);
+    p.setPen(QColor(255, 220, 140));
+    p.drawText(bx + pad, by + pad + fm.ascent(), cap);
 }
 
 bool SpectrumWaterfall::saveHistory(QWidget *dialogParent)
