@@ -18,11 +18,13 @@
   buffer with wall-clock timestamps, ΔN, calibration, serial, integrate.
   File menu **Save/Load Spectrogram History…** and context menu; format is
   append-friendly for continuous recording.
-- **Continuous spectrogram recording (C1):** checkbox **Record continuously**
+- **Continuous spectrogram recording:** checkbox **Record continuously**
   appends each history row to
-  `Documents/RadiacodeMonitor/spectrograms/<serial>/YYYY-MM-DD.rcsg`
-  (daily roll, append resume same day). Folder chooser + status path. Stop on
-  disconnect / quit. Compression and multi-day retention = later (C2).
+  `…/spectrograms/<serial>/YYYY-MM-DD.rcsg` (daily roll, append resume same day).
+  Folder chooser + status path. Stop on disconnect / quit.
+- **C2 retention + compress:** closed day files are **gzip**-compressed to
+  `.rcsg.gz`; **Keep recordings** (7…365 days) prunes older files. Load accepts
+  `.rcsg` and `.rcsg.gz`.
 
 ### Changed
 

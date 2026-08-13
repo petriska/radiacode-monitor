@@ -70,6 +70,8 @@ set(_radiacode_monitor_sources
   src/spectrumwaterfall.cpp
   src/spectrogramfile.h
   src/spectrogramfile.cpp
+  src/spectrogramcompress.h
+  src/spectrogramcompress.cpp
   src/spectrogramrecorder.h
   src/spectrogramrecorder.cpp
   src/spectrumexport.h

@@ -194,13 +194,25 @@ MainWindow::MainWindow(QWidget *parent)
     m_recordSpectrogramCheck = new QCheckBox(tr("Record continuously"), this);
     m_recordSpectrogramCheck->setToolTip(
         tr("Append every spectrogram row to a daily .rcsg file on disk\n"
-           "(Documents/RadiacodeMonitor/spectrograms/<serial>/YYYY-MM-DD.rcsg).\n"
-           "Survives app restarts for the same day (append). Compression/rotation = later."));
+           "(…/spectrograms/<serial>/YYYY-MM-DD.rcsg).\n"
+           "Same day: append after restart. Past days: gzip → .rcsg.gz; old files pruned."));
     form->addRow(QString(), m_recordSpectrogramCheck);
 
     m_recordFolderBtn = new QPushButton(tr("Recording folder…"), this);
     m_recordFolderBtn->setToolTip(tr("Choose the base directory for continuous spectrogram files."));
     form->addRow(QString(), m_recordFolderBtn);
+
+    m_recordKeepDaysCombo = new QComboBox(this);
+    m_recordKeepDaysCombo->addItem(tr("7 days"), 7);
+    m_recordKeepDaysCombo->addItem(tr("14 days"), 14);
+    m_recordKeepDaysCombo->addItem(tr("30 days"), 30);
+    m_recordKeepDaysCombo->addItem(tr("90 days"), 90);
+    m_recordKeepDaysCombo->addItem(tr("1 year"), 365);
+    m_recordKeepDaysCombo->setCurrentIndex(2); // 30
+    m_recordKeepDaysCombo->setToolTip(
+        tr("Delete spectrogram day files older than this (raw .rcsg and .rcsg.gz).\n"
+           "When a day rolls over, the closed file is gzip-compressed."));
+    form->addRow(tr("Keep recordings"), m_recordKeepDaysCombo);
 
     m_recordStatusLabel = new QLabel(tr("Recording: off"), this);
     m_recordStatusLabel->setWordWrap(true);
@@ -501,6 +513,16 @@ MainWindow::MainWindow(QWidget *parent)
         syncSpectrogramRecording();
     });
     connect(m_recordFolderBtn, &QPushButton::clicked, this, &MainWindow::onChooseRecordFolder);
+    connect(m_recordKeepDaysCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        if (!m_recordKeepDaysCombo || !m_spectrogramRecorder) {
+            return;
+        }
+        const int days = m_recordKeepDaysCombo->currentData().toInt();
+        m_spectrogramRecorder->setKeepDays(days);
+        QSettings().setValue(QStringLiteral("waterfall/recordKeepDays"), days);
+        m_spectrogramRecorder->pruneOldFiles();
+    });
     connect(m_spectrogramRecorder, &SpectrogramRecorder::recordingChanged, this, [this](bool on) {
         if (m_recordStatusLabel) {
             if (!on) {
@@ -620,8 +642,20 @@ MainWindow::MainWindow(QWidget *parent)
             recDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
                 + QStringLiteral("/RadiacodeMonitor/spectrograms");
         }
+        const int keepDays = settings.value(QStringLiteral("waterfall/recordKeepDays"), 30).toInt();
+        if (m_recordKeepDaysCombo) {
+            const QSignalBlocker b(m_recordKeepDaysCombo);
+            int idx = m_recordKeepDaysCombo->findData(keepDays);
+            if (idx < 0) {
+                idx = 2;
+            }
+            m_recordKeepDaysCombo->setCurrentIndex(idx);
+        }
         if (m_spectrogramRecorder) {
             m_spectrogramRecorder->setBaseDirectory(recDir);
+            m_spectrogramRecorder->setKeepDays(
+                m_recordKeepDaysCombo ? m_recordKeepDaysCombo->currentData().toInt() : 30);
+            m_spectrogramRecorder->setCompressOnRoll(true);
         }
     }
     refreshDeviceList();

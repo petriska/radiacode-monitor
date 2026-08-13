@@ -48,7 +48,8 @@ void configureStream(QDataStream &ds)
 
 QString fileFilter()
 {
-    return QStringLiteral("Spectrogram (*.rcsg);;All files (*.*)");
+    return QStringLiteral(
+        "Spectrogram (*.rcsg *.rcsg.gz);;Raw RCSG (*.rcsg);;Gzip RCSG (*.rcsg.gz);;All files (*.*)");
 }
 
 QString defaultExtension()

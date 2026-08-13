@@ -1,10 +1,14 @@
 #include "spectrumwaterfall.h"
+#include "spectrogramcompress.h"
 #include "spectrogramfile.h"
 #include "spectrogramrecorder.h"
 
 #include <QApplication>
 #include <QContextMenuEvent>
+#include <QDateTime>
+#include <QDir>
 #include <QEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QImageWriter>
@@ -813,9 +817,28 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
         return false;
     }
 
+    QString loadPath = path;
+    QString tempUnpacked;
+    if (path.endsWith(QStringLiteral(".gz"), Qt::CaseInsensitive)) {
+        tempUnpacked = QDir::temp().filePath(
+            QStringLiteral("rcsg-load-%1.rcsg")
+                .arg(QDateTime::currentMSecsSinceEpoch()));
+        QString err;
+        if (!SpectrogramCompress::gunzipFile(path, tempUnpacked, &err)) {
+            QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
+                                 tr("Failed to decompress:\n%1").arg(err));
+            return false;
+        }
+        loadPath = tempUnpacked;
+    }
+
     SpectrogramFile::Document doc;
     QString err;
-    if (!SpectrogramFile::load(path, &doc, &err)) {
+    const bool ok = SpectrogramFile::load(loadPath, &doc, &err);
+    if (!tempUnpacked.isEmpty()) {
+        QFile::remove(tempUnpacked);
+    }
+    if (!ok) {
         QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
                              tr("Failed to load:\n%1").arg(err));
         return false;

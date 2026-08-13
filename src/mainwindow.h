@@ -128,6 +128,7 @@ private:
     QPushButton *m_waterfallLiveBtn = nullptr;
     QCheckBox *m_recordSpectrogramCheck = nullptr;
     QPushButton *m_recordFolderBtn = nullptr;
+    QComboBox *m_recordKeepDaysCombo = nullptr;
     QLabel *m_recordStatusLabel = nullptr;
     SpectrogramRecorder *m_spectrogramRecorder = nullptr;
     QLabel *m_bgStatusLabel = nullptr;
