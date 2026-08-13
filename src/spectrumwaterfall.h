@@ -58,8 +58,10 @@ public:
     void setDeviceSerial(const QString &serial);
     QString deviceSerial() const { return m_deviceSerial; }
 
-    /// Export the current on-screen spectrogram view as a lossless PNG (file dialog).
-    bool exportViewAsPng(QWidget *dialogParent = nullptr);
+    /// Lossless PNG from **rate data** (not a widget screenshot).
+    /// View = visible time window × current energy zoom; Full = entire history buffer.
+    enum class PngExportScope { View, FullHistory };
+    bool exportAsPng(PngExportScope scope, QWidget *dialogParent = nullptr);
 
     void clear();
 
@@ -130,7 +132,10 @@ private:
     void drawCursor(QPainter &p, const QRect &plot) const;
     bool netModeActive() const;
     void emitScrollSignals();
-    void applyPngMetadata(QImage *img) const;
+    /// Rasterize rate rows [firstRow, firstRow+nRows) and channels [ch0, ch1) → RGB image.
+    QImage renderRatesToImage(int firstRow, int nRows, int ch0, int ch1) const;
+    void applyPngMetadata(QImage *img, int firstRow, int lastRow, int ch0, int ch1,
+                          PngExportScope scope) const;
 
     static constexpr int kMarginLeft = 64;
     static constexpr int kMarginRight = 14;

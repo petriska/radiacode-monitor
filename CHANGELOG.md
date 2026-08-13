@@ -10,8 +10,10 @@
   double-click jump back to newest data. Badge shows Live/Net and “hist” when paused.
 - Larger default spectrum/waterfall splitter share for the spectrogram pane.
 - Waterfall **context menu** (right-click): **Follow live**, **Go to oldest**,
-  **Export view as PNG…** (lossless; metadata includes Serial, time range, Live/Net,
-  calibration, integrate).
+  **Export view as PNG…** / **Export full history as PNG…** — lossless images
+  **rasterized from rate data** (not a widget screenshot); full history = entire
+  buffer (1 px per row × channel). Metadata: Serial, time range, Live/Net,
+  calibration, channel/row indices, integrate.
 
 ### Changed
 
