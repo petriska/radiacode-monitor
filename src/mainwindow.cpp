@@ -164,10 +164,29 @@ MainWindow::MainWindow(QWidget *parent)
     m_waterfallIntegrateSpin->setValue(1);
     m_waterfallIntegrateSpin->setSuffix(tr(" polls"));
     m_waterfallIntegrateSpin->setToolTip(
-        tr("Waterfall integrate: each display row sums N spectrum updates.\n"
-           "1 = every poll (~8 min history at full buffer).\n"
-           "2 ≈ 16 min, 4 ≈ 32 min, … — coarser time, longer history."));
+        tr("Spectrogram integrate: each display row sums N spectrum updates.\n"
+           "1 = every poll (~1 s per row). Higher N = coarser time, more wall-clock\n"
+           "history for the same row budget."));
     form->addRow(tr("Waterfall integrate"), m_waterfallIntegrateSpin);
+
+    m_waterfallHistoryCombo = new QComboBox(this);
+    m_waterfallHistoryCombo->addItem(tr("15 min"), 15);
+    m_waterfallHistoryCombo->addItem(tr("30 min"), 30);
+    m_waterfallHistoryCombo->addItem(tr("1 hour"), 60);
+    m_waterfallHistoryCombo->addItem(tr("2 hours"), 120);
+    m_waterfallHistoryCombo->addItem(tr("4 hours"), 240);
+    m_waterfallHistoryCombo->setCurrentIndex(3); // 2 h default
+    m_waterfallHistoryCombo->setToolTip(
+        tr("How much spectrogram history to keep in memory.\n"
+           "Row count ≈ minutes × 60 / integrate (1 s polls).\n"
+           "Wheel over the waterfall scrolls history; double-click returns to live."));
+    form->addRow(tr("Waterfall history"), m_waterfallHistoryCombo);
+
+    m_waterfallLiveBtn = new QPushButton(tr("Follow live"), this);
+    m_waterfallLiveBtn->setEnabled(false);
+    m_waterfallLiveBtn->setToolTip(
+        tr("Jump the spectrogram viewport to the newest data (also: double-click waterfall)."));
+    form->addRow(QString(), m_waterfallLiveBtn);
 
     liveLay->addLayout(form);
 
@@ -292,9 +311,9 @@ MainWindow::MainWindow(QWidget *parent)
     spectrumSplit->setChildrenCollapsible(false);
     spectrumSplit->addWidget(m_spectrum);
     spectrumSplit->addWidget(m_waterfall);
-    spectrumSplit->setStretchFactor(0, 3);
-    spectrumSplit->setStretchFactor(1, 2);
-    spectrumSplit->setSizes({380, 200});
+    spectrumSplit->setStretchFactor(0, 2);
+    spectrumSplit->setStretchFactor(1, 3);
+    spectrumSplit->setSizes({280, 320});
     tabs->addTab(spectrumSplit, tr("Spectrum"));
     // ROI tab: chart only (controls are above, next to Device).
     tabs->addTab(m_roiPanel, tr("ROI time series"));
@@ -437,6 +456,25 @@ MainWindow::MainWindow(QWidget *parent)
         }
         QSettings().setValue(QStringLiteral("waterfall/integrate"), n);
     });
+    connect(m_waterfallHistoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        if (!m_waterfallHistoryCombo || !m_waterfall) {
+            return;
+        }
+        const int minutes = m_waterfallHistoryCombo->currentData().toInt();
+        m_waterfall->setHistoryMinutes(minutes);
+        QSettings().setValue(QStringLiteral("waterfall/historyMinutes"), minutes);
+    });
+    connect(m_waterfallLiveBtn, &QPushButton::clicked, this, [this] {
+        if (m_waterfall) {
+            m_waterfall->followLive();
+        }
+    });
+    connect(m_waterfall, &SpectrumWaterfall::followLiveChanged, this, [this](bool following) {
+        if (m_waterfallLiveBtn) {
+            m_waterfallLiveBtn->setEnabled(!following);
+        }
+    });
     connect(m_acqStartBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStart);
     connect(m_acqStopBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStop);
     connect(m_acqModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -496,10 +534,29 @@ MainWindow::MainWindow(QWidget *parent)
             const QSignalBlocker blocker(m_waterfallIntegrateSpin);
             m_waterfallIntegrateSpin->setValue(qBound(1, integ, 32));
         }
+        const int histMin =
+            settings.value(QStringLiteral("waterfall/historyMinutes"), 120).toInt();
+        if (m_waterfallHistoryCombo) {
+            const QSignalBlocker blocker(m_waterfallHistoryCombo);
+            int idx = m_waterfallHistoryCombo->findData(histMin);
+            if (idx < 0) {
+                // Nearest lower preset.
+                idx = 0;
+                for (int i = 0; i < m_waterfallHistoryCombo->count(); ++i) {
+                    if (m_waterfallHistoryCombo->itemData(i).toInt() <= histMin) {
+                        idx = i;
+                    }
+                }
+            }
+            m_waterfallHistoryCombo->setCurrentIndex(idx);
+        }
         if (m_waterfall) {
             m_waterfall->setIntegrateCount(m_waterfallIntegrateSpin
                                                ? m_waterfallIntegrateSpin->value()
                                                : 1);
+            m_waterfall->setHistoryMinutes(
+                m_waterfallHistoryCombo ? m_waterfallHistoryCombo->currentData().toInt()
+                                        : 120);
         }
     }
     refreshDeviceList();

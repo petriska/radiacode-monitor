@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Spectrogram history** (waterfall): keep up to **15 min … 4 h** of rate rows in RAM
+  (default 2 h); capacity scales with integrate. Per-row wall-clock timestamps.
+- **Scroll history**: mouse wheel on waterfall pans time; **Follow live** button and
+  double-click jump back to newest data. Badge shows Live/Net and “hist” when paused.
+- Larger default spectrum/waterfall splitter share for the spectrogram pane.
+
+### Changed
+
+- Waterfall Net mode applies BG rate at display time (live rates stored once); no longer
+  rebuilds the full history from cumulative spectrum snapshots.
+
 ## [0.3.0] — 2026-08-10
 
 ### Added

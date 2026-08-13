@@ -91,18 +91,17 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 - Time axis is **1:1**: one history row = one screen pixel, bottom-aligned (SDR-style scroll).
 - Do **not** stretch the full row buffer to fill the pane height (that made history look “remapped”).
 - Colour scale = 0 … max rate over history; full recolour only when that max changes (~2% hysteresis).
-- Current history depth is a **short live buffer** (~`maxRows`, not multi-hour).
+- **History buffer** (feature branch / post-0.3.0): minutes preset (15–240, default 120),
+  wheel scroll, follow-live, per-row `wallTime`. Viewport-sized image cache only.
 
-**Explicitly not in 0.3.0 — planned later (“spectrogram analysis”)**
+**Still planned (“spectrogram analysis”)**
 
-- Long ring buffer (1–2+ h), scroll-back through history
-- Continuous on-disk spectrogram + reload/continue after restart (needs per-row timestamps)
-- Larger waterfall as primary analysis surface
+- Continuous on-disk spectrogram + reload/continue after restart
 - Rectangle select on waterfall → spectrum from X, MCS/time series from Y
 - ROI definition from waterfall selection
 - Offline session open/export of spectrogram
 
-Prefer a **new feature branch** from `main` / tag `v0.3.0` for that work; do not silently reinvent half of it inside unrelated fixes.
+Work spectrogram features on `feature/spectrogram-history` (or successor) from `main`.
 
 ---
 

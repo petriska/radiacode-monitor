@@ -120,6 +120,8 @@ private:
     QComboBox *m_spectrumViewCombo = nullptr;
     QPushButton *m_loadBgBtn = nullptr;
     QSpinBox *m_waterfallIntegrateSpin = nullptr;
+    QComboBox *m_waterfallHistoryCombo = nullptr;
+    QPushButton *m_waterfallLiveBtn = nullptr;
     QLabel *m_bgStatusLabel = nullptr;
     QAction *m_saveSpectrumAct = nullptr;
     QAction *m_exportRoiCsvAct = nullptr;
