@@ -51,6 +51,7 @@ private slots:
     void syncSpectrogramRecording();
     void onChooseRecordFolder();
     void setSetupPanelVisible(bool visible);
+    void setFocusSpectrogram(bool focus);
     void onError(const QString &message);
     void onStateChanged(QtRadiacode::RadiaCodeDevice::State state);
     void onDataBuf(const QList<QtRadiacode::RcDataItem> &items);
@@ -167,9 +168,10 @@ private:
     QSplitter *m_spectrumSplit = nullptr;
     QWidget *m_setupPanel = nullptr;
     QToolButton *m_setupToggleBtn = nullptr;
-    QAction *m_toggleSetupAct = nullptr;
     QAction *m_focusSpectrogramAct = nullptr;
     bool m_setupVisible = true;
+    bool m_focusSpectrogram = false;
+    bool m_setupVisibleBeforeFocus = true;
     QList<int> m_savedMainSizes;
     QList<int> m_savedSpectrumSizes;
     QtRadiacode::RcSpectrum m_lastSpectrum;
