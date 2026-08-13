@@ -94,12 +94,16 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 - **History buffer** (feature branch / post-0.3.0): minutes preset (15–240, default 120),
   wheel scroll, follow-live, per-row `wallTime`. Viewport-sized image cache only.
 
+**Spectrogram I/O (feature branch)**
+
+- `.rcsg` binary via `src/spectrogramfile.*` — see header for layout.
+- Save/load full buffer (rates + deltas + wallTime); continuous append recorder still TODO.
+
 **Still planned (“spectrogram analysis”)**
 
-- Continuous on-disk spectrogram + reload/continue after restart
+- Continuous on-disk recording + seamless continue after restart
 - Rectangle select on waterfall → spectrum from X, MCS/time series from Y
 - ROI definition from waterfall selection
-- Offline session open/export of spectrogram
 
 Work spectrogram features on `feature/spectrogram-history` (or successor) from `main`.
 

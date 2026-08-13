@@ -592,6 +592,24 @@ void MainWindow::setupMenuBar()
         tr("Export recorded ROI time series samples to a CSV file."));
 
     fileMenu->addSeparator();
+    auto *saveSpecAct = fileMenu->addAction(tr("Save Spectrogram &History…"), this, [this] {
+        if (m_waterfall) {
+            m_waterfall->saveHistory(this);
+        }
+    });
+    saveSpecAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+H")));
+    saveSpecAct->setToolTip(
+        tr("Save the waterfall spectrogram buffer (.rcsg): rates, timestamps, serial."));
+
+    auto *loadSpecAct = fileMenu->addAction(tr("&Load Spectrogram History…"), this, [this] {
+        if (m_waterfall) {
+            m_waterfall->loadHistory(this);
+        }
+    });
+    loadSpecAct->setToolTip(
+        tr("Load a .rcsg spectrogram into the waterfall (replaces current history)."));
+
+    fileMenu->addSeparator();
     auto *exitAct = fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
     exitAct->setShortcut(QKeySequence::Quit);
     exitAct->setMenuRole(QAction::QuitRole);

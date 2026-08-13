@@ -68,6 +68,8 @@ set(_radiacode_monitor_sources
   src/spectrumwidget.cpp
   src/spectrumwaterfall.h
   src/spectrumwaterfall.cpp
+  src/spectrogramfile.h
+  src/spectrogramfile.cpp
   src/spectrumexport.h
   src/spectrumexport.cpp
   src/roitimeseries/roimath.h

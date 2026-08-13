@@ -1,9 +1,11 @@
 #include "spectrumwaterfall.h"
+#include "spectrogramfile.h"
 
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QImageWriter>
 #include <QMenu>
 #include <QMessageBox>
@@ -29,7 +31,7 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
     setToolTip(tr(
         "Spectrogram / waterfall: count rate per channel over time (ΔN / Δt).\n"
         "Mouse wheel: scroll history · Double-click: jump to live.\n"
-        "Right-click: Follow live, Go to oldest, Export PNG (view / full history).\n"
+        "Right-click: Follow live, Go to oldest, PNG export, Save/Load history (.rcsg).\n"
         "Time is 1:1 (one row = one pixel). Colour scale = 0 … max over history.\n"
         "X range follows spectrum zoom. Hover for energy, rate, ΔN, time."));
 }
@@ -697,6 +699,18 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
            "Height = number of rows in memory; width = all channels.\n"
            "May be large for multi-hour buffers."));
 
+    menu.addSeparator();
+
+    QAction *saveAct = menu.addAction(tr("Save history…"));
+    saveAct->setEnabled(!m_rows.isEmpty());
+    saveAct->setToolTip(
+        tr("Save the full spectrogram buffer as a binary .rcsg file\n"
+           "(rates, ΔN, wall-clock timestamps, serial, calibration)."));
+
+    QAction *loadAct = menu.addAction(tr("Load history…"));
+    loadAct->setToolTip(
+        tr("Load a .rcsg spectrogram file into the buffer (replaces current history)."));
+
     QAction *chosen = menu.exec(event->globalPos());
     if (chosen == followAct) {
         followLive();
@@ -706,8 +720,147 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         exportAsPng(PngExportScope::View, window());
     } else if (chosen == pngFullAct) {
         exportAsPng(PngExportScope::FullHistory, window());
+    } else if (chosen == saveAct) {
+        saveHistory(window());
+    } else if (chosen == loadAct) {
+        loadHistory(window());
     }
     event->accept();
+}
+
+bool SpectrumWaterfall::saveHistory(QWidget *dialogParent)
+{
+    if (m_rows.isEmpty() || m_channels <= 0) {
+        return false;
+    }
+
+    QString defaultName = QStringLiteral("spectrogram");
+    if (!m_deviceSerial.isEmpty()) {
+        defaultName += QLatin1Char('-') + m_deviceSerial;
+    }
+    if (m_rows.last().wallTime.isValid()) {
+        defaultName += QLatin1Char('-')
+            + m_rows.last().wallTime.toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    }
+    defaultName += QStringLiteral(".rcsg");
+
+    const QString docs =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getSaveFileName(
+        dialogParent ? dialogParent : this,
+        tr("Save spectrogram history"),
+        docs.isEmpty() ? defaultName : (docs + QLatin1Char('/') + defaultName),
+        SpectrogramFile::fileFilter());
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    SpectrogramFile::Document doc;
+    doc.nChannels = quint32(m_channels);
+    doc.a0 = m_a0;
+    doc.a1 = m_a1;
+    doc.a2 = m_a2;
+    doc.integrate = quint32(m_integrate);
+    doc.historyMinutes = quint32(m_historyMinutes);
+    doc.serial = m_deviceSerial;
+    doc.rows.reserve(m_rows.size());
+    for (const Row &r : m_rows) {
+        SpectrogramFile::Row out;
+        out.rates = r.rates;
+        out.deltas = r.deltas;
+        out.liveTimeSec = r.liveTimeSec;
+        out.intervalSec = r.intervalSec;
+        out.wallTime = r.wallTime;
+        doc.rows.append(std::move(out));
+    }
+
+    QString err;
+    if (!SpectrogramFile::save(path, doc, &err)) {
+        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Save history"),
+                             tr("Failed to save:\n%1").arg(err));
+        return false;
+    }
+    return true;
+}
+
+bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
+{
+    const QString docs =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getOpenFileName(
+        dialogParent ? dialogParent : this,
+        tr("Load spectrogram history"),
+        docs,
+        SpectrogramFile::fileFilter());
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    SpectrogramFile::Document doc;
+    QString err;
+    if (!SpectrogramFile::load(path, &doc, &err)) {
+        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
+                             tr("Failed to load:\n%1").arg(err));
+        return false;
+    }
+    if (doc.rows.isEmpty() || doc.nChannels == 0) {
+        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
+                             tr("File contains no spectrogram rows."));
+        return false;
+    }
+
+    // Replace in-memory history (live acquisition can continue after a new baseline).
+    m_rows.clear();
+    m_channels = int(doc.nChannels);
+    m_a0 = doc.a0;
+    m_a1 = doc.a1;
+    m_a2 = doc.a2;
+    m_integrate = qBound(1, int(doc.integrate), kMaxIntegrate);
+    m_historyMinutes = qBound(kMinHistoryMinutes, int(doc.historyMinutes), kMaxHistoryMinutes);
+    recomputeCapacity();
+    if (!doc.serial.isEmpty()) {
+        m_deviceSerial = doc.serial;
+    }
+
+    m_rows.reserve(doc.rows.size());
+    for (const SpectrogramFile::Row &r : doc.rows) {
+        Row row;
+        row.rates = r.rates;
+        row.deltas = r.deltas;
+        row.liveTimeSec = r.liveTimeSec;
+        row.intervalSec = r.intervalSec;
+        row.wallTime = r.wallTime;
+        m_rows.append(std::move(row));
+    }
+    while (m_rows.size() > m_maxRows) {
+        m_rows.removeFirst();
+    }
+
+    m_hasBaseline = false;
+    m_baseline = Snapshot{};
+    m_integrateProgress = 0;
+    m_scrollFromNewest = 0;
+    m_displayMax = matrixMaxRate();
+    m_xMin = 0;
+    m_xMax = m_channels;
+    m_viewportFirstRow = -1;
+    m_viewportCount = 0;
+    m_image = QImage();
+    clearCursor();
+
+    rebuildViewportImage();
+    emit followLiveChanged(true);
+    emitScrollSignals();
+    update();
+
+    QMessageBox::information(
+        dialogParent ? dialogParent : this,
+        tr("Load history"),
+        tr("Loaded %1 rows (%2 channels) from\n%3")
+            .arg(m_rows.size())
+            .arg(m_channels)
+            .arg(QFileInfo(path).fileName()));
+    return true;
 }
 
 QImage SpectrumWaterfall::renderRatesToImage(int firstRow, int nRows, int ch0, int ch1) const

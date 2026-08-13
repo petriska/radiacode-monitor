@@ -63,6 +63,10 @@ public:
     enum class PngExportScope { View, FullHistory };
     bool exportAsPng(PngExportScope scope, QWidget *dialogParent = nullptr);
 
+    /// Save / load full history buffer as binary .rcsg (rates + timestamps + meta).
+    bool saveHistory(QWidget *dialogParent = nullptr);
+    bool loadHistory(QWidget *dialogParent = nullptr);
+
     void clear();
 
     /// Vertical highlight linked from spectrum hover (−1 = none). Does not emit signals.

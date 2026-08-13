@@ -14,6 +14,10 @@
   **rasterized from rate data** (not a widget screenshot); full history = entire
   buffer (1 px per row × channel). Metadata: Serial, time range, Live/Net,
   calibration, channel/row indices, integrate.
+- **Spectrogram history file** (`.rcsg`): binary save/load of the full rate
+  buffer with wall-clock timestamps, ΔN, calibration, serial, integrate.
+  File menu **Save/Load Spectrogram History…** and context menu; format is
+  append-friendly for a future continuous recorder.
 
 ### Changed
 
