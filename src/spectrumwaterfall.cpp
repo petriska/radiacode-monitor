@@ -1630,10 +1630,10 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
         p.drawText(x - tw / 2, plot.bottom() + fm.ascent() + 2, label);
     }
 
-    // Cursor first; selection (and its caption) on top so it is not hidden by
-    // the "Live · E = …" hover bubble.
+    // Selection underlay first; cursor bubble on top after selection is finalized
+    // (during drag the cursor overlay stays hidden so rubber-band caption is readable).
+    drawSelection(p, plot);
     if (!m_selectDragging) {
         drawCursor(p, plot);
     }
-    drawSelection(p, plot);
 }
