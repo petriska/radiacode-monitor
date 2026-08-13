@@ -295,11 +295,12 @@ MainWindow::MainWindow(QWidget *parent)
     auto *connLay = new QVBoxLayout(connBox);
     connLay->setContentsMargins(8, 6, 8, 6);
     connLay->setSpacing(4);
-    auto *connBtnRow = new QHBoxLayout;
-    connBtnRow->setSpacing(6);
+    // Narrow setup column: combo full-width, buttons on a second row.
     m_deviceCombo = new QComboBox(this);
-    m_deviceCombo->setMinimumWidth(200);
     m_deviceCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_deviceCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_deviceCombo->setMinimumContentsLength(12);
+    m_deviceCombo->setMinimumWidth(0);
     m_refreshBtn = new QPushButton(tr("Refresh"), this);
     m_connectBtn = new QPushButton(tr("Connect"), this);
     m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
@@ -308,25 +309,28 @@ MainWindow::MainWindow(QWidget *parent)
            "BLE: device must be free (not held by phone or Home Assistant)."));
     m_connectBtn->setToolTip(tr("Connect via USB or BLE to the selected device"));
     m_disconnectBtn->setToolTip(tr("Close connection and release the device"));
-    connBtnRow->addWidget(m_deviceCombo, 1);
-    connBtnRow->addWidget(m_refreshBtn);
-    connBtnRow->addWidget(m_connectBtn);
-    connBtnRow->addWidget(m_disconnectBtn);
+    connLay->addWidget(m_deviceCombo);
+    auto *connBtnRow = new QHBoxLayout;
+    connBtnRow->setSpacing(4);
+    connBtnRow->addWidget(m_refreshBtn, 1);
+    connBtnRow->addWidget(m_connectBtn, 1);
+    connBtnRow->addWidget(m_disconnectBtn, 1);
     connLay->addLayout(connBtnRow);
-    // Serial / firmware live here instead of the Live form (compact one line).
-    auto *deviceMeta = new QHBoxLayout;
-    deviceMeta->setSpacing(12);
+    // Serial / firmware on two compact lines for narrow width.
     m_serialLabel->setVisible(true);
     m_fwLabel->setVisible(true);
     m_serialLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
     m_fwLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
     m_serialLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_fwLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    deviceMeta->addWidget(new QLabel(tr("Serial:"), this));
-    deviceMeta->addWidget(m_serialLabel, 1);
-    deviceMeta->addWidget(new QLabel(tr("FW:"), this));
-    deviceMeta->addWidget(m_fwLabel, 1);
-    connLay->addLayout(deviceMeta);
+    m_serialLabel->setWordWrap(true);
+    auto *metaForm = new QFormLayout;
+    metaForm->setContentsMargins(0, 2, 0, 0);
+    metaForm->setHorizontalSpacing(8);
+    metaForm->setVerticalSpacing(2);
+    metaForm->addRow(tr("Serial"), m_serialLabel);
+    metaForm->addRow(tr("FW"), m_fwLabel);
+    connLay->addLayout(metaForm);
     connBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
     // Setup stack: Device on top, Live+Acquisition, then ROI controls (scrollable).
@@ -1047,14 +1051,20 @@ int MainWindow::addUsbDevicesToCombo()
 {
     const auto devices = QtRadiacode::listUsbDevices();
     for (const auto &d : devices) {
-        const QString label = d.serialNumber.isEmpty()
-            ? tr("[USB] %1").arg(d.product.isEmpty() ? tr("(unknown)") : d.product)
-            : tr("[USB] %1  (%2)")
-                  .arg(d.serialNumber, d.product.isEmpty() ? tr("Radiacode") : d.product);
-        m_deviceCombo->addItem(label);
+        // Short closed-combo text for narrow setup panel; full string as tooltip.
+        const QString product =
+            d.product.isEmpty() ? tr("Radiacode") : d.product;
+        const QString shortLabel = d.serialNumber.isEmpty()
+            ? tr("USB · %1").arg(product)
+            : tr("USB · %1").arg(d.serialNumber);
+        const QString tip = d.serialNumber.isEmpty()
+            ? tr("[USB] %1").arg(product)
+            : tr("[USB] %1  (%2)").arg(d.serialNumber, product);
+        m_deviceCombo->addItem(shortLabel);
         const int row = m_deviceCombo->count() - 1;
         m_deviceCombo->setItemData(row, QStringLiteral("usb"), RoleTransport);
         m_deviceCombo->setItemData(row, d.serialNumber, RoleId);
+        m_deviceCombo->setItemData(row, tip, Qt::ToolTipRole);
     }
     return devices.size();
 }
@@ -1107,16 +1117,19 @@ void MainWindow::onBleDeviceFound(const QtRadiacode::RcBleDeviceInfo &info)
     }
 
     removeEmptyPlaceholder();
-    QString label = tr("[BLE] %1  %2").arg(info.name, info.address);
+    const QString name = info.name.isEmpty() ? tr("BLE") : info.name;
+    const QString shortLabel = tr("BLE · %1").arg(name);
+    QString tip = tr("[BLE] %1  %2").arg(name, info.address);
     if (info.hasRssi) {
-        label += tr("  %1 dBm").arg(info.rssiDbm);
+        tip += tr("  %1 dBm").arg(info.rssiDbm);
     }
-    m_deviceCombo->addItem(label);
+    m_deviceCombo->addItem(shortLabel);
     const int row = m_deviceCombo->count() - 1;
     m_deviceCombo->setItemData(row, QStringLiteral("ble"), RoleTransport);
     m_deviceCombo->setItemData(row, info.address, RoleId);
     m_deviceCombo->setItemData(row, info.rssiDbm, RoleRssi);
     m_deviceCombo->setItemData(row, info.hasRssi, RoleHasRssi);
+    m_deviceCombo->setItemData(row, tip, Qt::ToolTipRole);
     ++m_bleFoundThisScan;
 }
 
