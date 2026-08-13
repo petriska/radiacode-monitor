@@ -25,9 +25,6 @@
 - **C2 retention + compress:** closed day files are **gzip**-compressed to
   `.rcsg.gz`; **Keep recordings** (7…365 days) prunes older files. Load accepts
   `.rcsg` and `.rcsg.gz`.
-
-### Added
-
 - Waterfall **rectangle selection (E1):** drag with left button to mark energy × time
   region; caption shows keV/channels, row count, wall-clock span. Esc / click /
   context menu **Clear selection**. Selection tracks history trim. Ready for
