@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "roitimeseries/roimath.h"
 #include "roitimeseries/roitimeseriespanel.h"
+#include "roitimeseries/roirecorder.h"
+#include "roitimeseries/timeserieswidget.h"
 #include "spectrumexport.h"
 #include "spectrogramfile.h"
 #include "spectrogramrecorder.h"
@@ -17,6 +19,8 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
@@ -37,6 +41,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <cmath>
 
 namespace {
 // Update when the repo / downloads page URL changes.
@@ -419,17 +425,35 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_waterfall, &SpectrumWaterfall::selectionChanged, this,
             [this](bool has, int ch0, int ch1, int row0, int row1) {
         if (!has) {
+            if (m_spectrumFromSelection) {
+                m_spectrumFromSelection = false;
+                m_selectionSpectrum = {};
+                refreshSpectrumDisplay();
+                statusBar()->showMessage(tr("Selection cleared — spectrum back to live view"), 3000);
+            }
             return;
         }
         statusBar()->showMessage(
-            tr("Selection: ch %1–%2 · rows %3–%4 (%5 rows) — extract spectrum/MCS next")
+            tr("Selection: ch %1–%2 · rows %3–%4 (%5 rows) — right-click for spectrum/MCS")
                 .arg(ch0)
                 .arg(ch1 - 1)
                 .arg(row0)
                 .arg(row1)
                 .arg(row1 - row0 + 1),
             4000);
+        // Keep the spectrum plot in sync while viewing a selection extract.
+        if (m_spectrumFromSelection) {
+            onExtractSelectionSpectrum();
+        }
     });
+    connect(m_waterfall, &SpectrumWaterfall::extractSpectrumRequested, this,
+            &MainWindow::onExtractSelectionSpectrum);
+    connect(m_waterfall, &SpectrumWaterfall::extractMcsRequested, this,
+            &MainWindow::onExtractSelectionMcs);
+    connect(m_waterfall, &SpectrumWaterfall::exportSelectionSpectrumRequested, this,
+            &MainWindow::onExportSelectionSpectrum);
+    connect(m_waterfall, &SpectrumWaterfall::exportSelectionMcsRequested, this,
+            &MainWindow::onExportSelectionMcsCsv);
     connect(m_waterfall, &SpectrumWaterfall::cursorInfoChanged, this,
             [this](int channel, double energyKeV, float rateCps, quint32 deltaCounts,
                    quint32 liveTimeSec, int ageFromNewestSec) {
@@ -1908,6 +1932,10 @@ QtRadiacode::RcSpectrum MainWindow::computeNetSpectrum(const QtRadiacode::RcSpec
 
 QtRadiacode::RcSpectrum MainWindow::spectrumForView() const
 {
+    if (m_spectrumFromSelection && !m_selectionSpectrum.counts.isEmpty()) {
+        return m_selectionSpectrum;
+    }
+
     const auto view = m_spectrumViewCombo
         ? static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt())
         : SpectrumView::Live;
@@ -1926,6 +1954,198 @@ QtRadiacode::RcSpectrum MainWindow::spectrumForView() const
     }
 }
 
+void MainWindow::onExtractSelectionSpectrum()
+{
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        return;
+    }
+    const auto ex = m_waterfall->extractSelectionSpectrum();
+    if (ex.counts.isEmpty()) {
+        statusBar()->showMessage(tr("Selection spectrum is empty"), 3000);
+        return;
+    }
+    m_selectionSpectrum.counts = ex.counts;
+    m_selectionSpectrum.durationSec = ex.durationSec;
+    m_selectionSpectrum.a0 = ex.a0;
+    m_selectionSpectrum.a1 = ex.a1;
+    m_selectionSpectrum.a2 = ex.a2;
+    m_spectrumFromSelection = true;
+    refreshSpectrumDisplay();
+    const auto sel = m_waterfall->selection();
+    statusBar()->showMessage(
+        tr("Spectrum from selection: ch %1–%2 · %3 s live · total %4 counts "
+           "(clear selection to return to live)")
+            .arg(sel.ch0)
+            .arg(sel.ch1 - 1)
+            .arg(ex.durationSec)
+            .arg(spectrumTotalCounts(m_selectionSpectrum)),
+        6000);
+}
+
+void MainWindow::onExtractSelectionMcs()
+{
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        return;
+    }
+    const auto pts = m_waterfall->extractSelectionMcs();
+    if (pts.isEmpty()) {
+        statusBar()->showMessage(tr("Selection MCS is empty"), 3000);
+        return;
+    }
+
+    const auto sel = m_waterfall->selection();
+    float a0 = m_lastSpectrum.a0;
+    float a1 = m_lastSpectrum.a1;
+    float a2 = m_lastSpectrum.a2;
+    if (m_spectrumFromSelection && !m_selectionSpectrum.counts.isEmpty()) {
+        a0 = m_selectionSpectrum.a0;
+        a1 = m_selectionSpectrum.a1;
+        a2 = m_selectionSpectrum.a2;
+    }
+
+    RoiWindow roi;
+    roi.id = QStringLiteral("selection");
+    roi.name = tr("Selection");
+    roi.eMinKeV = a0 + a1 * double(sel.ch0) + a2 * double(sel.ch0) * double(sel.ch0);
+    roi.eMaxKeV = a0 + a1 * double(sel.ch1) + a2 * double(sel.ch1) * double(sel.ch1);
+    roi.enabled = true;
+
+    QVector<RoiTimeSample> samples;
+    samples.reserve(pts.size());
+    const QDateTime t0 = pts.first().wallTime;
+    for (const auto &p : pts) {
+        RoiTimeSample s;
+        s.hostTime = p.wallTime;
+        s.liveSec = p.liveTimeSec;
+        s.elapsedFromT0 = (t0.isValid() && p.wallTime.isValid())
+                              ? t0.msecsTo(p.wallTime) / 1000.0
+                              : std::numeric_limits<double>::quiet_NaN();
+        s.grossCps = p.cps;
+        s.grossCounts = p.counts;
+        RoiSample rs;
+        rs.id = roi.id;
+        rs.counts = p.counts;
+        rs.cps = p.cps;
+        s.rois = {rs};
+        samples.append(s);
+    }
+
+    auto *dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(tr("MCS from selection"));
+    dlg->resize(720, 360);
+    auto *lay = new QVBoxLayout(dlg);
+    auto *chart = new TimeSeriesWidget(dlg);
+    chart->setSamples(samples, t0.isValid(), t0, {roi});
+    lay->addWidget(chart, 1);
+    auto *info = new QLabel(
+        tr("ROI ch %1–%2 (%3–%4 keV) · %5 samples · integrated ΔN in window")
+            .arg(sel.ch0)
+            .arg(sel.ch1 - 1)
+            .arg(roi.eMinKeV, 0, 'f', 1)
+            .arg(roi.eMaxKeV, 0, 'f', 1)
+            .arg(pts.size()),
+        dlg);
+    info->setWordWrap(true);
+    lay->addWidget(info);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    auto *exportBtn = buttons->addButton(tr("Export CSV…"), QDialogButtonBox::ActionRole);
+    connect(exportBtn, &QPushButton::clicked, this, [this] { onExportSelectionMcsCsv(); });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+    lay->addWidget(buttons);
+    dlg->show();
+}
+
+void MainWindow::onExportSelectionSpectrum()
+{
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        return;
+    }
+    // Ensure we have the latest extract.
+    onExtractSelectionSpectrum();
+    if (m_selectionSpectrum.counts.isEmpty()) {
+        return;
+    }
+
+    QString defaultName = QStringLiteral("selection-spectrum");
+    if (m_waterfall->deviceSerial().size()) {
+        defaultName += QLatin1Char('-') + m_waterfall->deviceSerial();
+    }
+    defaultName += QStringLiteral(".csv");
+
+    QFileDialog dlg(this, tr("Export selection spectrum"));
+    dlg.setAcceptMode(QFileDialog::AcceptSave);
+    dlg.setNameFilters(QStringList()
+                       << SpectrumExport::nameFilterForFormat(SpectrumExport::Format::Csv)
+                       << SpectrumExport::nameFilterForFormat(SpectrumExport::Format::Tka)
+                       << SpectrumExport::nameFilterForFormat(SpectrumExport::Format::N42)
+                       << SpectrumExport::nameFilterForFormat(SpectrumExport::Format::Npes)
+                       << tr("All files (*.*)"));
+    dlg.selectNameFilter(SpectrumExport::nameFilterForFormat(SpectrumExport::Format::Csv));
+    dlg.setDefaultSuffix(QStringLiteral("csv"));
+    const QString docs =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (!docs.isEmpty()) {
+        dlg.setDirectory(docs);
+    }
+    dlg.selectFile(defaultName);
+    if (dlg.exec() != QDialog::Accepted || dlg.selectedFiles().isEmpty()) {
+        return;
+    }
+    QString path = dlg.selectedFiles().constFirst();
+    const auto fmt = SpectrumExport::formatFromFilter(dlg.selectedNameFilter());
+    path = SpectrumExport::withExtension(path, fmt);
+    const QString err = SpectrumExport::writeSpectrumFile(
+        path, fmt, m_selectionSpectrum, m_waterfall->deviceSerial(), QString());
+    if (!err.isEmpty()) {
+        QMessageBox::warning(this, tr("Export selection spectrum"), err);
+        return;
+    }
+    statusBar()->showMessage(tr("Saved selection spectrum: %1").arg(path), 5000);
+}
+
+void MainWindow::onExportSelectionMcsCsv()
+{
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        return;
+    }
+    const auto pts = m_waterfall->extractSelectionMcs();
+    if (pts.isEmpty()) {
+        return;
+    }
+
+    QString defaultName = QStringLiteral("selection-mcs");
+    if (m_waterfall->deviceSerial().size()) {
+        defaultName += QLatin1Char('-') + m_waterfall->deviceSerial();
+    }
+    defaultName += QStringLiteral(".csv");
+
+    const QString docs =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Export selection MCS CSV"),
+        docs.isEmpty() ? defaultName : (docs + QLatin1Char('/') + defaultName),
+        tr("CSV files (*.csv);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Export MCS"), f.errorString());
+        return;
+    }
+    QTextStream ts(&f);
+    ts << "wall_time_iso,live_time_s,interval_s,roi_cps,roi_counts\n";
+    for (const auto &p : pts) {
+        ts << (p.wallTime.isValid() ? p.wallTime.toString(Qt::ISODate) : QString()) << ','
+           << p.liveTimeSec << ',' << p.intervalSec << ','
+           << QString::number(p.cps, 'g', 8) << ',' << p.counts << '\n';
+    }
+    statusBar()->showMessage(tr("Saved selection MCS: %1").arg(path), 5000);
+}
+
 void MainWindow::refreshSpectrumDisplay()
 {
     const QtRadiacode::RcSpectrum sp = spectrumForView();
@@ -1935,7 +2155,11 @@ void MainWindow::refreshSpectrumDisplay()
         m_spectrumTotalLabel->setText(QStringLiteral("—"));
     } else {
         m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
-        m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
+        QString liveText = formatDuration(sp.durationSec);
+        if (m_spectrumFromSelection) {
+            liveText = tr("sel %1").arg(liveText);
+        }
+        m_spectrumLiveLabel->setText(liveText);
         m_spectrumTotalLabel->setText(tr("%1").arg(spectrumTotalCounts(sp)));
     }
 

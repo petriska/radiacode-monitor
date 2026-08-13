@@ -51,6 +51,10 @@ private slots:
     void syncSpectrogramRecording();
     void onChooseRecordFolder();
     void setSetupPanelVisible(bool visible);
+    void onExtractSelectionSpectrum();
+    void onExtractSelectionMcs();
+    void onExportSelectionSpectrum();
+    void onExportSelectionMcsCsv();
     void onError(const QString &message);
     void onStateChanged(QtRadiacode::RadiaCodeDevice::State state);
     void onDataBuf(const QList<QtRadiacode::RcDataItem> &items);
@@ -176,4 +180,8 @@ private:
     bool m_hasSpectrum = false;
     QtRadiacode::RcSpectrum m_backgroundSpectrum;
     bool m_hasBackground = false;
+
+    /// Spectrum plot showing integrated selection (overrides Live/BG/Net until cleared).
+    bool m_spectrumFromSelection = false;
+    QtRadiacode::RcSpectrum m_selectionSpectrum;
 };

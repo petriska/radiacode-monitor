@@ -27,8 +27,12 @@
   `.rcsg` and `.rcsg.gz`.
 - Waterfall **rectangle selection (E1):** drag with left button to mark energy × time
   region; caption shows keV/channels, row count, wall-clock span. Esc / click /
-  context menu **Clear selection**. Selection tracks history trim. Ready for
-  spectrum/MCS extract (E2).
+  context menu **Clear selection**. Move by dragging inside the box. Selection
+  tracks history trim.
+- **Selection extract (E2):** context menu **Spectrum from selection** (integrates
+  ΔN into the spectrum plot; clear selection to return to live), **MCS from
+  selection…** (time-series dialog), **Export selection spectrum…** /
+  **Export selection MCS CSV…**.
 
 ### Changed
 

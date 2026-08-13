@@ -86,6 +86,26 @@ public:
     Selection selection() const { return m_selection; }
     void clearSelection();
 
+    /// Integrated counts per channel over the selection (ΔN sum); zeros outside ch window.
+    struct SelectionSpectrum {
+        QVector<quint32> counts;
+        quint32 durationSec = 0; // sum of intervalSec over selected rows
+        float a0 = 0;
+        float a1 = 0;
+        float a2 = 0;
+    };
+    /// One MCS sample: ROI rate (sum of rates in ch window) at a history row.
+    struct SelectionMcsPoint {
+        QDateTime wallTime;
+        quint32 liveTimeSec = 0;
+        quint32 intervalSec = 0;
+        double cps = 0;
+        quint64 counts = 0; // sum of ΔN in ch window
+    };
+
+    SelectionSpectrum extractSelectionSpectrum() const;
+    QVector<SelectionMcsPoint> extractSelectionMcs() const;
+
     void clear();
 
     /// Vertical highlight linked from spectrum hover (−1 = none). Does not emit signals.
@@ -99,6 +119,10 @@ signals:
     void scrollChanged(int scrollFromNewest, int maxScroll);
     /// Emitted when the analysis rectangle is set, cleared, or adjusted after history trim.
     void selectionChanged(bool hasSelection, int ch0, int ch1, int row0, int row1);
+    void extractSpectrumRequested();
+    void extractMcsRequested();
+    void exportSelectionSpectrumRequested();
+    void exportSelectionMcsRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;

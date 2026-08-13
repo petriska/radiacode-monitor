@@ -199,6 +199,72 @@ void SpectrumWaterfall::clearSelection()
     update();
 }
 
+SpectrumWaterfall::SelectionSpectrum SpectrumWaterfall::extractSelectionSpectrum() const
+{
+    SelectionSpectrum out;
+    out.a0 = m_a0;
+    out.a1 = m_a1;
+    out.a2 = m_a2;
+    if (!m_selection.valid || m_channels <= 0 || m_rows.isEmpty()) {
+        return out;
+    }
+    const int r0 = qBound(0, m_selection.row0, m_rows.size() - 1);
+    const int r1 = qBound(r0, m_selection.row1, m_rows.size() - 1);
+    const int c0 = qBound(0, m_selection.ch0, m_channels);
+    const int c1 = qBound(c0, m_selection.ch1, m_channels);
+
+    out.counts = QVector<quint32>(m_channels, 0);
+    quint64 liveSum = 0;
+    for (int r = r0; r <= r1; ++r) {
+        const Row &row = m_rows.at(r);
+        liveSum += row.intervalSec;
+        const int n = qMin(m_channels, row.deltas.size());
+        for (int ch = c0; ch < c1 && ch < n; ++ch) {
+            const quint64 v = quint64(out.counts[ch]) + quint64(row.deltas[ch]);
+            out.counts[ch] = v > 0xffffffffu ? 0xffffffffu : quint32(v);
+        }
+    }
+    out.durationSec = liveSum > 0xffffffffu ? 0xffffffffu : quint32(liveSum);
+    return out;
+}
+
+QVector<SpectrumWaterfall::SelectionMcsPoint> SpectrumWaterfall::extractSelectionMcs() const
+{
+    QVector<SelectionMcsPoint> out;
+    if (!m_selection.valid || m_channels <= 0 || m_rows.isEmpty()) {
+        return out;
+    }
+    const int r0 = qBound(0, m_selection.row0, m_rows.size() - 1);
+    const int r1 = qBound(r0, m_selection.row1, m_rows.size() - 1);
+    const int c0 = qBound(0, m_selection.ch0, m_channels);
+    const int c1 = qBound(c0, m_selection.ch1, m_channels);
+
+    out.reserve(r1 - r0 + 1);
+    for (int r = r0; r <= r1; ++r) {
+        const Row &row = m_rows.at(r);
+        SelectionMcsPoint p;
+        p.wallTime = row.wallTime;
+        p.liveTimeSec = row.liveTimeSec;
+        p.intervalSec = row.intervalSec;
+        double cps = 0;
+        quint64 counts = 0;
+        const int nR = qMin(m_channels, row.rates.size());
+        const int nD = qMin(m_channels, row.deltas.size());
+        for (int ch = c0; ch < c1; ++ch) {
+            if (ch < nR) {
+                cps += double(displayRate(row.rates[ch], ch));
+            }
+            if (ch < nD) {
+                counts += row.deltas[ch];
+            }
+        }
+        p.cps = cps;
+        p.counts = counts;
+        out.append(p);
+    }
+    return out;
+}
+
 void SpectrumWaterfall::emitSelectionChanged()
 {
     if (m_selection.valid) {
@@ -994,6 +1060,26 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
 
     menu.addSeparator();
 
+    QAction *specAct = menu.addAction(tr("Spectrum from selection"));
+    specAct->setEnabled(m_selection.valid);
+    specAct->setToolTip(
+        tr("Integrate ΔN over the selected time range into the spectrum plot."));
+
+    QAction *mcsAct = menu.addAction(tr("MCS from selection…"));
+    mcsAct->setEnabled(m_selection.valid);
+    mcsAct->setToolTip(
+        tr("Show count rate vs time for the selected energy window."));
+
+    QAction *exportSpecAct = menu.addAction(tr("Export selection spectrum…"));
+    exportSpecAct->setEnabled(m_selection.valid);
+    exportSpecAct->setToolTip(tr("Save the integrated selection spectrum to a file."));
+
+    QAction *exportMcsAct = menu.addAction(tr("Export selection MCS CSV…"));
+    exportMcsAct->setEnabled(m_selection.valid);
+    exportMcsAct->setToolTip(tr("Save MCS time series (time, cps, counts) as CSV."));
+
+    menu.addSeparator();
+
     QAction *pngViewAct = menu.addAction(tr("Export view as PNG…"));
     pngViewAct->setEnabled(!m_rows.isEmpty());
     pngViewAct->setToolTip(
@@ -1026,6 +1112,14 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         goToOldest();
     } else if (chosen == clearSelAct) {
         clearSelection();
+    } else if (chosen == specAct) {
+        emit extractSpectrumRequested();
+    } else if (chosen == mcsAct) {
+        emit extractMcsRequested();
+    } else if (chosen == exportSpecAct) {
+        emit exportSelectionSpectrumRequested();
+    } else if (chosen == exportMcsAct) {
+        emit exportSelectionMcsRequested();
     } else if (chosen == pngViewAct) {
         exportAsPng(PngExportScope::View, window());
     } else if (chosen == pngFullAct) {
