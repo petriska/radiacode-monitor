@@ -96,8 +96,9 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 
 **Spectrogram I/O (feature branch)**
 
-- `.rcsg` binary via `src/spectrogramfile.*` — see header for layout.
-- Save/load full buffer (rates + deltas + wallTime); continuous append recorder still TODO.
+- `.rcsg` binary via `src/spectrogramfile.*` — see header for layout; `AppendWriter` for continuous.
+- `SpectrogramRecorder` — daily files under record dir; C1 append, C2 compress/rotate later.
+- Save/load full buffer; continuous checkbox in Live panel.
 
 **Still planned (“spectrogram analysis”)**
 

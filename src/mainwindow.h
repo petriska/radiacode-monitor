@@ -6,6 +6,7 @@
 #include "protocol/types.h"
 
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QLabel>
@@ -19,6 +20,7 @@
 class SpectrumWidget;
 class SpectrumWaterfall;
 class RoiTimeSeriesPanel;
+class SpectrogramRecorder;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -44,6 +46,8 @@ private slots:
 
     void onConnected();
     void onDisconnected();
+    void syncSpectrogramRecording();
+    void onChooseRecordFolder();
     void onError(const QString &message);
     void onStateChanged(QtRadiacode::RadiaCodeDevice::State state);
     void onDataBuf(const QList<QtRadiacode::RcDataItem> &items);
@@ -122,6 +126,10 @@ private:
     QSpinBox *m_waterfallIntegrateSpin = nullptr;
     QComboBox *m_waterfallHistoryCombo = nullptr;
     QPushButton *m_waterfallLiveBtn = nullptr;
+    QCheckBox *m_recordSpectrogramCheck = nullptr;
+    QPushButton *m_recordFolderBtn = nullptr;
+    QLabel *m_recordStatusLabel = nullptr;
+    SpectrogramRecorder *m_spectrogramRecorder = nullptr;
     QLabel *m_bgStatusLabel = nullptr;
     QAction *m_saveSpectrumAct = nullptr;
     QAction *m_exportRoiCsvAct = nullptr;

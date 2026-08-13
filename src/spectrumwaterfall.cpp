@@ -1,5 +1,6 @@
 #include "spectrumwaterfall.h"
 #include "spectrogramfile.h"
+#include "spectrogramrecorder.h"
 
 #include <QApplication>
 #include <QContextMenuEvent>
@@ -104,6 +105,11 @@ void SpectrumWaterfall::goToOldest()
 void SpectrumWaterfall::setDeviceSerial(const QString &serial)
 {
     m_deviceSerial = serial.trimmed();
+}
+
+void SpectrumWaterfall::setRecorder(SpectrogramRecorder *recorder)
+{
+    m_recorder = recorder;
 }
 
 void SpectrumWaterfall::clampScroll()
@@ -431,6 +437,17 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
 {
     const bool wasFollow = (m_scrollFromNewest == 0);
     const bool droppedOldest = (m_rows.size() >= m_maxRows);
+
+    // Continuous disk recording (C1) — same row model as .rcsg save/load.
+    if (m_recorder && m_recorder->isRecording()) {
+        SpectrogramFile::Row out;
+        out.rates = row.rates;
+        out.deltas = row.deltas;
+        out.liveTimeSec = row.liveTimeSec;
+        out.intervalSec = row.intervalSec;
+        out.wallTime = row.wallTime;
+        m_recorder->appendRow(out, nullptr);
+    }
 
     m_rows.append(std::move(row));
     while (m_rows.size() > m_maxRows) {

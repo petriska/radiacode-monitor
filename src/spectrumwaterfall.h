@@ -5,6 +5,8 @@
 #include <QVector>
 #include <QWidget>
 
+class SpectrogramRecorder;
+
 // Time × energy spectrogram / waterfall under the spectrum (SDR-style).
 //
 // History: ring of rate rows (ΔN/Δt) with wall-clock timestamps. Capacity is
@@ -66,6 +68,10 @@ public:
     /// Save / load full history buffer as binary .rcsg (rates + timestamps + meta).
     bool saveHistory(QWidget *dialogParent = nullptr);
     bool loadHistory(QWidget *dialogParent = nullptr);
+
+    /// Optional continuous recorder (not owned). Appends each new history row while set.
+    void setRecorder(SpectrogramRecorder *recorder);
+    SpectrogramRecorder *recorder() const { return m_recorder; }
 
     void clear();
 
@@ -185,4 +191,5 @@ private:
     int m_linkedCh = -1;
 
     QString m_deviceSerial;
+    SpectrogramRecorder *m_recorder = nullptr; // not owned
 };

@@ -2,6 +2,8 @@
 #include "roitimeseries/roimath.h"
 #include "roitimeseries/roitimeseriespanel.h"
 #include "spectrumexport.h"
+#include "spectrogramfile.h"
+#include "spectrogramrecorder.h"
 #include "spectrumwaterfall.h"
 #include "spectrumwidget.h"
 
@@ -23,6 +25,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
 #include <QSplitter>
@@ -188,6 +191,22 @@ MainWindow::MainWindow(QWidget *parent)
         tr("Jump the spectrogram viewport to the newest data (also: double-click waterfall)."));
     form->addRow(QString(), m_waterfallLiveBtn);
 
+    m_recordSpectrogramCheck = new QCheckBox(tr("Record continuously"), this);
+    m_recordSpectrogramCheck->setToolTip(
+        tr("Append every spectrogram row to a daily .rcsg file on disk\n"
+           "(Documents/RadiacodeMonitor/spectrograms/<serial>/YYYY-MM-DD.rcsg).\n"
+           "Survives app restarts for the same day (append). Compression/rotation = later."));
+    form->addRow(QString(), m_recordSpectrogramCheck);
+
+    m_recordFolderBtn = new QPushButton(tr("Recording folder…"), this);
+    m_recordFolderBtn->setToolTip(tr("Choose the base directory for continuous spectrogram files."));
+    form->addRow(QString(), m_recordFolderBtn);
+
+    m_recordStatusLabel = new QLabel(tr("Recording: off"), this);
+    m_recordStatusLabel->setWordWrap(true);
+    m_recordStatusLabel->setStyleSheet(QStringLiteral("color: #888; font-size: 11px;"));
+    form->addRow(QString(), m_recordStatusLabel);
+
     liveLay->addLayout(form);
 
     // Acquisition run: stop by device live time or total spectrum counts.
@@ -307,6 +326,8 @@ MainWindow::MainWindow(QWidget *parent)
     auto *tabs = new QTabWidget(this);
     m_spectrum = new SpectrumWidget(this);
     m_waterfall = new SpectrumWaterfall(this);
+    m_spectrogramRecorder = new SpectrogramRecorder(this);
+    m_waterfall->setRecorder(m_spectrogramRecorder);
     auto *spectrumSplit = new QSplitter(Qt::Vertical, this);
     spectrumSplit->setChildrenCollapsible(false);
     spectrumSplit->addWidget(m_spectrum);
@@ -475,6 +496,36 @@ MainWindow::MainWindow(QWidget *parent)
             m_waterfallLiveBtn->setEnabled(!following);
         }
     });
+    connect(m_recordSpectrogramCheck, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue(QStringLiteral("waterfall/recordContinuous"), on);
+        syncSpectrogramRecording();
+    });
+    connect(m_recordFolderBtn, &QPushButton::clicked, this, &MainWindow::onChooseRecordFolder);
+    connect(m_spectrogramRecorder, &SpectrogramRecorder::recordingChanged, this, [this](bool on) {
+        if (m_recordStatusLabel) {
+            if (!on) {
+                m_recordStatusLabel->setText(tr("Recording: off"));
+            }
+        }
+    });
+    connect(m_spectrogramRecorder, &SpectrogramRecorder::pathChanged, this, [this](const QString &path) {
+        if (!m_recordStatusLabel) {
+            return;
+        }
+        if (path.isEmpty()) {
+            if (m_spectrogramRecorder && !m_spectrogramRecorder->isRecording()) {
+                m_recordStatusLabel->setText(tr("Recording: off"));
+            }
+            return;
+        }
+        m_recordStatusLabel->setText(tr("Recording → %1").arg(path));
+        m_recordStatusLabel->setToolTip(path);
+    });
+    connect(m_spectrogramRecorder, &SpectrogramRecorder::errorOccurred, this,
+            [this](const QString &msg) {
+        statusBar()->showMessage(tr("Spectrogram record: %1").arg(msg), 8000);
+        appendLog(tr("Spectrogram record error: %1").arg(msg));
+    });
     connect(m_acqStartBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStart);
     connect(m_acqStopBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStop);
     connect(m_acqModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -558,16 +609,112 @@ MainWindow::MainWindow(QWidget *parent)
                 m_waterfallHistoryCombo ? m_waterfallHistoryCombo->currentData().toInt()
                                         : 120);
         }
+        const bool rec =
+            settings.value(QStringLiteral("waterfall/recordContinuous"), false).toBool();
+        if (m_recordSpectrogramCheck) {
+            const QSignalBlocker b(m_recordSpectrogramCheck);
+            m_recordSpectrogramCheck->setChecked(rec);
+        }
+        QString recDir = settings.value(QStringLiteral("waterfall/recordDir")).toString();
+        if (recDir.isEmpty()) {
+            recDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+                + QStringLiteral("/RadiacodeMonitor/spectrograms");
+        }
+        if (m_spectrogramRecorder) {
+            m_spectrogramRecorder->setBaseDirectory(recDir);
+        }
     }
     refreshDeviceList();
 }
 
 MainWindow::~MainWindow()
 {
+    if (m_spectrogramRecorder) {
+        m_spectrogramRecorder->stop();
+    }
     m_pollTimer->stop();
     stopBleScan();
     if (m_device && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Disconnected) {
         m_device->disconnectFromDevice();
+    }
+}
+
+void MainWindow::onChooseRecordFolder()
+{
+    QString start = m_spectrogramRecorder ? m_spectrogramRecorder->baseDirectory() : QString();
+    if (start.isEmpty()) {
+        start = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    }
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Spectrogram recording folder"), start);
+    if (dir.isEmpty()) {
+        return;
+    }
+    QSettings().setValue(QStringLiteral("waterfall/recordDir"), dir);
+    if (m_spectrogramRecorder) {
+        const bool was = m_spectrogramRecorder->isRecording();
+        m_spectrogramRecorder->stop();
+        m_spectrogramRecorder->setBaseDirectory(dir);
+        if (was || (m_recordSpectrogramCheck && m_recordSpectrogramCheck->isChecked())) {
+            syncSpectrogramRecording();
+        }
+    }
+    statusBar()->showMessage(tr("Spectrogram folder: %1").arg(dir), 5000);
+}
+
+void MainWindow::syncSpectrogramRecording()
+{
+    if (!m_spectrogramRecorder || !m_waterfall) {
+        return;
+    }
+
+    const bool want = m_recordSpectrogramCheck && m_recordSpectrogramCheck->isChecked();
+    if (!want) {
+        m_spectrogramRecorder->stop();
+        return;
+    }
+
+    // Need connected device + known channel count (after first spectrum).
+    if (!m_device || m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
+        m_spectrogramRecorder->stop();
+        if (m_recordStatusLabel) {
+            m_recordStatusLabel->setText(tr("Recording: waiting for connect…"));
+        }
+        return;
+    }
+    if (!m_hasSpectrum || m_lastSpectrum.counts.isEmpty()) {
+        m_spectrogramRecorder->stop();
+        if (m_recordStatusLabel) {
+            m_recordStatusLabel->setText(tr("Recording: waiting for spectrum…"));
+        }
+        return;
+    }
+
+    SpectrogramFile::Header h;
+    h.nChannels = quint32(m_lastSpectrum.counts.size());
+    h.a0 = m_lastSpectrum.a0;
+    h.a1 = m_lastSpectrum.a1;
+    h.a2 = m_lastSpectrum.a2;
+    h.integrate = quint32(m_waterfall->integrateCount());
+    h.historyMinutes = quint32(m_waterfall->historyMinutes());
+    h.serial = m_device->serialNumber();
+    h.flags = SpectrogramFile::kFlagHasDeltas;
+
+    if (m_spectrogramRecorder->baseDirectory().isEmpty()) {
+        const QString def =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+            + QStringLiteral("/RadiacodeMonitor/spectrograms");
+        m_spectrogramRecorder->setBaseDirectory(def);
+    }
+
+    QString err;
+    if (!m_spectrogramRecorder->start(h, &err)) {
+        if (m_recordStatusLabel) {
+            m_recordStatusLabel->setText(tr("Recording: error"));
+            m_recordStatusLabel->setToolTip(err);
+        }
+        statusBar()->showMessage(tr("Spectrogram record: %1").arg(err), 8000);
+        return;
     }
 }
 
@@ -1233,6 +1380,7 @@ void MainWindow::onConnected()
     if (m_waterfall) {
         m_waterfall->setDeviceSerial(m_device->serialNumber());
     }
+    syncSpectrogramRecording();
     m_statusLabel->setText(tr("Connected"));
     m_statusLabel->setToolTip(
         tr("Serial: %1\nFirmware: %2")
@@ -1297,6 +1445,9 @@ void MainWindow::onDisconnected()
     m_serialLabel->setText(QStringLiteral("—"));
     m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
+    if (m_spectrogramRecorder) {
+        m_spectrogramRecorder->stop();
+    }
     if (m_waterfall) {
         m_waterfall->setDeviceSerial(QString());
         m_waterfall->clear();
@@ -1418,6 +1569,11 @@ void MainWindow::onSpectrum(const QtRadiacode::RcSpectrum &sp)
     if (m_waterfall) {
         m_waterfall->setCalibration(sp.a0, sp.a1, sp.a2);
         m_waterfall->pushSpectrum(sp.counts, sp.durationSec);
+    }
+    // Start continuous file recording once channels are known (if checkbox on).
+    if (m_recordSpectrogramCheck && m_recordSpectrogramCheck->isChecked()
+        && m_spectrogramRecorder && !m_spectrogramRecorder->isRecording()) {
+        syncSpectrogramRecording();
     }
     refreshSpectrumDisplay();
     updateBackgroundUi();

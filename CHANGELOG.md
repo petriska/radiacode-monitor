@@ -17,7 +17,12 @@
 - **Spectrogram history file** (`.rcsg`): binary save/load of the full rate
   buffer with wall-clock timestamps, ΔN, calibration, serial, integrate.
   File menu **Save/Load Spectrogram History…** and context menu; format is
-  append-friendly for a future continuous recorder.
+  append-friendly for continuous recording.
+- **Continuous spectrogram recording (C1):** checkbox **Record continuously**
+  appends each history row to
+  `Documents/RadiacodeMonitor/spectrograms/<serial>/YYYY-MM-DD.rcsg`
+  (daily roll, append resume same day). Folder chooser + status path. Stop on
+  disconnect / quit. Compression and multi-day retention = later (C2).
 
 ### Changed
 
