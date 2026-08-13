@@ -389,11 +389,6 @@ MainWindow::MainWindow(QWidget *parent)
     root->addWidget(m_mainSplitter, 1);
 
     connect(m_setupToggleBtn, &QToolButton::clicked, this, [this] {
-        if (m_focusSpectrogram) {
-            // Exit focus mode (restores setup + spectrum splitter sizes).
-            setFocusSpectrogram(false);
-            return;
-        }
         setSetupPanelVisible(!m_setupVisible);
     });
 
@@ -752,6 +747,10 @@ void MainWindow::updateSetupToggleUi()
         m_setupToggleBtn->setText(QStringLiteral("›"));
         m_setupToggleBtn->setToolTip(tr("Show setup panel (device, live, ROI)"));
     }
+    if (m_toggleSetupAct) {
+        const QSignalBlocker b(m_toggleSetupAct);
+        m_toggleSetupAct->setChecked(m_setupVisible);
+    }
 }
 
 void MainWindow::setSetupPanelVisible(bool visible)
@@ -793,41 +792,6 @@ void MainWindow::setSetupPanelVisible(bool visible)
 
     QSettings().setValue(QStringLiteral("ui/setupVisible"), m_setupVisible);
     updateSetupToggleUi();
-}
-
-void MainWindow::setFocusSpectrogram(bool focus)
-{
-    if (focus == m_focusSpectrogram) {
-        if (m_focusSpectrogramAct) {
-            const QSignalBlocker b(m_focusSpectrogramAct);
-            m_focusSpectrogramAct->setChecked(m_focusSpectrogram);
-        }
-        return;
-    }
-
-    if (focus) {
-        m_setupVisibleBeforeFocus = m_setupVisible;
-        if (m_spectrumSplit) {
-            m_savedSpectrumSizes = m_spectrumSplit->sizes();
-        }
-        setSetupPanelVisible(false);
-        if (m_spectrumSplit) {
-            const int h = qMax(200, m_spectrumSplit->height());
-            m_spectrumSplit->setSizes({qMax(80, h / 5), qMax(120, (h * 4) / 5)});
-        }
-        m_focusSpectrogram = true;
-    } else {
-        m_focusSpectrogram = false;
-        if (m_spectrumSplit && m_savedSpectrumSizes.size() >= 2) {
-            m_spectrumSplit->setSizes(m_savedSpectrumSizes);
-        }
-        setSetupPanelVisible(m_setupVisibleBeforeFocus);
-    }
-
-    if (m_focusSpectrogramAct) {
-        const QSignalBlocker b(m_focusSpectrogramAct);
-        m_focusSpectrogramAct->setChecked(m_focusSpectrogram);
-    }
 }
 
 void MainWindow::onChooseRecordFolder()
@@ -953,14 +917,26 @@ void MainWindow::setupMenuBar()
     exitAct->setMenuRole(QAction::QuitRole);
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
-    m_focusSpectrogramAct = viewMenu->addAction(tr("&Focus spectrogram"));
-    m_focusSpectrogramAct->setCheckable(true);
-    m_focusSpectrogramAct->setChecked(false);
-    m_focusSpectrogramAct->setShortcut(QKeySequence(Qt::Key_F11));
+    m_toggleSetupAct = viewMenu->addAction(tr("Show &setup panel"));
+    m_toggleSetupAct->setCheckable(true);
+    m_toggleSetupAct->setChecked(m_setupVisible);
+    m_toggleSetupAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
+    m_toggleSetupAct->setToolTip(tr("Show or hide device / live / ROI settings."));
+    connect(m_toggleSetupAct, &QAction::toggled, this, [this](bool on) {
+        setSetupPanelVisible(on);
+    });
+
+    m_focusSpectrogramAct = viewMenu->addAction(tr("&Focus spectrogram"), this, [this] {
+        setSetupPanelVisible(false);
+        if (m_spectrumSplit) {
+            m_savedSpectrumSizes = m_spectrumSplit->sizes();
+            const int h = qMax(200, m_spectrumSplit->height());
+            m_spectrumSplit->setSizes({qMax(80, h / 5), qMax(120, (h * 4) / 5)});
+        }
+    });
+    m_focusSpectrogramAct->setShortcut(QKeySequence(QStringLiteral("F11")));
     m_focusSpectrogramAct->setToolTip(
-        tr("Toggle: hide setup and enlarge the spectrogram.\n"
-           "Press F11 again to restore the previous layout."));
-    connect(m_focusSpectrogramAct, &QAction::toggled, this, &MainWindow::setFocusSpectrogram);
+        tr("Hide setup panel and enlarge the spectrogram (waterfall)."));
 
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
     auto *aboutAct = helpMenu->addAction(tr("&About Radiacode Monitor…"), this,

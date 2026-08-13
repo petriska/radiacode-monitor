@@ -31,10 +31,9 @@
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer
   rebuilds the full history from cumulative spectrum snapshots.
 - **UI layout:** collapsible **setup panel** (Device / Live / Acquisition / ROI) on the
-  left; spectrum + spectrogram take the main area. Toggle `‹`/`›` for the setup
-  column. **F11** / **View → Focus spectrogram** toggles focus mode (hide setup +
-  enlarge waterfall; press again to restore). Splitter sizes and setup visibility
-  saved in QSettings.
+  left; spectrum + spectrogram take the main area. Toggle `‹`/`›` or **View → Show
+  setup panel** (`Ctrl+B`). **View → Focus spectrogram** (`F11`) hides setup and
+  enlarges the waterfall. Splitter sizes and setup visibility saved in QSettings.
 
 ## [0.3.0] — 2026-08-10
 
