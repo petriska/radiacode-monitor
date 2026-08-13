@@ -14,8 +14,10 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
+#include <QToolButton>
 
 class SpectrumWidget;
 class SpectrumWaterfall;
@@ -48,6 +50,7 @@ private slots:
     void onDisconnected();
     void syncSpectrogramRecording();
     void onChooseRecordFolder();
+    void setSetupPanelVisible(bool visible);
     void onError(const QString &message);
     void onStateChanged(QtRadiacode::RadiaCodeDevice::State state);
     void onDataBuf(const QList<QtRadiacode::RcDataItem> &items);
@@ -67,6 +70,7 @@ private:
     void setupMenuBar();
     void setConnectedUi(bool connected);
     void appendLog(const QString &line);
+    void updateSetupToggleUi();
     static QString formatDuration(quint32 sec);
     bool isBleConnection() const;
     void requestSpectrumGated();
@@ -157,6 +161,17 @@ private:
     SpectrumWidget *m_spectrum = nullptr;
     SpectrumWaterfall *m_waterfall = nullptr;
     RoiTimeSeriesPanel *m_roiPanel = nullptr;
+
+    // Layout: collapsible setup (left) + plots (right).
+    QSplitter *m_mainSplitter = nullptr;
+    QSplitter *m_spectrumSplit = nullptr;
+    QWidget *m_setupPanel = nullptr;
+    QToolButton *m_setupToggleBtn = nullptr;
+    QAction *m_toggleSetupAct = nullptr;
+    QAction *m_focusSpectrogramAct = nullptr;
+    bool m_setupVisible = true;
+    QList<int> m_savedMainSizes;
+    QList<int> m_savedSpectrumSizes;
     QtRadiacode::RcSpectrum m_lastSpectrum;
     bool m_hasSpectrum = false;
     QtRadiacode::RcSpectrum m_backgroundSpectrum;

@@ -18,12 +18,14 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -32,6 +34,7 @@
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -73,15 +76,25 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *central = new QWidget(this);
     setCentralWidget(central);
-    auto *root = new QVBoxLayout(central);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(6);
+    auto *root = new QHBoxLayout(central);
+    root->setContentsMargins(4, 4, 4, 4);
+    root->setSpacing(4);
 
-    // Top: Live (left) | Device + ROI controls (right). Saves vertical space on 1080p.
-    auto *topRow = new QHBoxLayout;
-    topRow->setSpacing(8);
+    // --- Collapsible setup column (device / live / acquisition / ROI) ---
+    m_setupToggleBtn = new QToolButton(this);
+    m_setupToggleBtn->setAutoRaise(true);
+    m_setupToggleBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_setupToggleBtn->setFixedWidth(22);
+    m_setupToggleBtn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    m_setupToggleBtn->setToolTip(tr("Show or hide the setup panel (device, live, ROI)."));
+    root->addWidget(m_setupToggleBtn, 0);
 
-    auto *liveBox = new QGroupBox(tr("Live"), this);
+    m_setupPanel = new QWidget(this);
+    auto *setupLay = new QVBoxLayout(m_setupPanel);
+    setupLay->setContentsMargins(0, 0, 0, 0);
+    setupLay->setSpacing(6);
+
+    auto *liveBox = new QGroupBox(tr("Live"), m_setupPanel);
     auto *liveLay = new QVBoxLayout(liveBox);
     liveLay->setContentsMargins(8, 8, 8, 8);
     liveLay->setSpacing(4);
@@ -276,18 +289,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_acqProgressLabel->setStyleSheet(QStringLiteral("color: #bbb;"));
     acqLay->addWidget(m_acqProgressLabel);
     liveLay->addWidget(acqBox);
-
-    // Live should not steal vertical space from the spectrum plot.
     liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    liveBox->setMinimumWidth(280);
-    liveBox->setMaximumWidth(420);
-    topRow->addWidget(liveBox, 0, Qt::AlignTop);
 
-    // Right column: Device (compact) above ROI controls.
-    auto *rightCol = new QVBoxLayout;
-    rightCol->setSpacing(6);
-
-    auto *connBox = new QGroupBox(tr("Device"), this);
+    auto *connBox = new QGroupBox(tr("Device"), m_setupPanel);
     auto *connLay = new QVBoxLayout(connBox);
     connLay->setContentsMargins(8, 6, 8, 6);
     connLay->setSpacing(4);
@@ -323,34 +327,66 @@ MainWindow::MainWindow(QWidget *parent)
     deviceMeta->addWidget(new QLabel(tr("FW:"), this));
     deviceMeta->addWidget(m_fwLabel, 1);
     connLay->addLayout(deviceMeta);
-    connBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
-    rightCol->addWidget(connBox);
+    connBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+
+    // Setup stack: Device on top, Live+Acquisition, then ROI controls (scrollable).
+    setupLay->addWidget(connBox);
+    setupLay->addWidget(liveBox);
 
     m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
     if (QWidget *roiCtrl = m_roiPanel->controlsWidget()) {
-        roiCtrl->setMinimumWidth(320);
-        roiCtrl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        rightCol->addWidget(roiCtrl, 1);
+        roiCtrl->setMinimumWidth(260);
+        roiCtrl->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        auto *roiBox = new QGroupBox(tr("ROI"), m_setupPanel);
+        auto *roiLay = new QVBoxLayout(roiBox);
+        roiLay->setContentsMargins(6, 6, 6, 6);
+        roiLay->addWidget(roiCtrl);
+        setupLay->addWidget(roiBox, 1);
+    } else {
+        setupLay->addStretch(1);
     }
-    topRow->addLayout(rightCol, 1);
-    root->addLayout(topRow, 0);
 
+    m_setupPanel->setMinimumWidth(280);
+    m_setupPanel->setMaximumWidth(400);
+    m_setupPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+
+    auto *setupScroll = new QScrollArea(this);
+    setupScroll->setWidget(m_setupPanel);
+    setupScroll->setWidgetResizable(true);
+    setupScroll->setFrameShape(QFrame::NoFrame);
+    setupScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setupScroll->setMinimumWidth(0);
+    setupScroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+
+    // --- Main plots (dominant) ---
     auto *tabs = new QTabWidget(this);
     m_spectrum = new SpectrumWidget(this);
     m_waterfall = new SpectrumWaterfall(this);
     m_spectrogramRecorder = new SpectrogramRecorder(this);
     m_waterfall->setRecorder(m_spectrogramRecorder);
-    auto *spectrumSplit = new QSplitter(Qt::Vertical, this);
-    spectrumSplit->setChildrenCollapsible(false);
-    spectrumSplit->addWidget(m_spectrum);
-    spectrumSplit->addWidget(m_waterfall);
-    spectrumSplit->setStretchFactor(0, 2);
-    spectrumSplit->setStretchFactor(1, 3);
-    spectrumSplit->setSizes({280, 320});
-    tabs->addTab(spectrumSplit, tr("Spectrum"));
-    // ROI tab: chart only (controls are above, next to Device).
+    m_spectrumSplit = new QSplitter(Qt::Vertical, this);
+    m_spectrumSplit->setChildrenCollapsible(false);
+    m_spectrumSplit->addWidget(m_spectrum);
+    m_spectrumSplit->addWidget(m_waterfall);
+    m_spectrumSplit->setStretchFactor(0, 1);
+    m_spectrumSplit->setStretchFactor(1, 3);
+    m_spectrumSplit->setSizes({180, 480});
+    tabs->addTab(m_spectrumSplit, tr("Spectrum"));
+    // ROI tab: chart only (controls live in the setup panel).
     tabs->addTab(m_roiPanel, tr("ROI time series"));
-    root->addWidget(tabs, 1); // take remaining height for plots
+
+    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+    m_mainSplitter->setChildrenCollapsible(true);
+    m_mainSplitter->addWidget(setupScroll);
+    m_mainSplitter->addWidget(tabs);
+    m_mainSplitter->setStretchFactor(0, 0);
+    m_mainSplitter->setStretchFactor(1, 1);
+    m_mainSplitter->setSizes({320, 900});
+    root->addWidget(m_mainSplitter, 1);
+
+    connect(m_setupToggleBtn, &QToolButton::clicked, this, [this] {
+        setSetupPanelVisible(!m_setupVisible);
+    });
 
     connect(m_spectrum, &SpectrumWidget::viewRangeChanged, m_waterfall,
             &SpectrumWaterfall::setViewRange);
@@ -657,12 +693,34 @@ MainWindow::MainWindow(QWidget *parent)
                 m_recordKeepDaysCombo ? m_recordKeepDaysCombo->currentData().toInt() : 30);
             m_spectrogramRecorder->setCompressOnRoll(true);
         }
+
+        const bool setupVis = settings.value(QStringLiteral("ui/setupVisible"), true).toBool();
+        setSetupPanelVisible(setupVis);
+        const QByteArray mainState =
+            settings.value(QStringLiteral("ui/mainSplitter")).toByteArray();
+        if (m_mainSplitter && !mainState.isEmpty()) {
+            m_mainSplitter->restoreState(mainState);
+        }
+        const QByteArray specState =
+            settings.value(QStringLiteral("ui/spectrumSplitter")).toByteArray();
+        if (m_spectrumSplit && !specState.isEmpty()) {
+            m_spectrumSplit->restoreState(specState);
+        }
     }
+    updateSetupToggleUi();
     refreshDeviceList();
 }
 
 MainWindow::~MainWindow()
 {
+    QSettings settings;
+    settings.setValue(QStringLiteral("ui/setupVisible"), m_setupVisible);
+    if (m_mainSplitter) {
+        settings.setValue(QStringLiteral("ui/mainSplitter"), m_mainSplitter->saveState());
+    }
+    if (m_spectrumSplit) {
+        settings.setValue(QStringLiteral("ui/spectrumSplitter"), m_spectrumSplit->saveState());
+    }
     if (m_spectrogramRecorder) {
         m_spectrogramRecorder->stop();
     }
@@ -671,6 +729,64 @@ MainWindow::~MainWindow()
     if (m_device && m_device->state() != QtRadiacode::RadiaCodeDevice::State::Disconnected) {
         m_device->disconnectFromDevice();
     }
+}
+
+void MainWindow::updateSetupToggleUi()
+{
+    if (!m_setupToggleBtn) {
+        return;
+    }
+    if (m_setupVisible) {
+        m_setupToggleBtn->setText(QStringLiteral("‹"));
+        m_setupToggleBtn->setToolTip(tr("Hide setup panel"));
+    } else {
+        m_setupToggleBtn->setText(QStringLiteral("›"));
+        m_setupToggleBtn->setToolTip(tr("Show setup panel (device, live, ROI)"));
+    }
+    if (m_toggleSetupAct) {
+        m_toggleSetupAct->setChecked(m_setupVisible);
+    }
+}
+
+void MainWindow::setSetupPanelVisible(bool visible)
+{
+    if (!m_mainSplitter || m_mainSplitter->count() < 2) {
+        m_setupVisible = visible;
+        updateSetupToggleUi();
+        return;
+    }
+
+    QWidget *setupSide = m_mainSplitter->widget(0);
+    if (!setupSide) {
+        return;
+    }
+
+    if (visible == m_setupVisible && setupSide->isVisible() == visible) {
+        updateSetupToggleUi();
+        return;
+    }
+
+    if (!visible && m_setupVisible) {
+        m_savedMainSizes = m_mainSplitter->sizes();
+    }
+
+    m_setupVisible = visible;
+    setupSide->setVisible(visible);
+
+    if (visible) {
+        if (m_savedMainSizes.size() >= 2 && m_savedMainSizes[0] > 40) {
+            m_mainSplitter->setSizes(m_savedMainSizes);
+        } else {
+            const int total = m_mainSplitter->width() > 0 ? m_mainSplitter->width() : 1200;
+            m_mainSplitter->setSizes({320, qMax(400, total - 320)});
+        }
+    } else {
+        const int total = qMax(1, m_mainSplitter->width());
+        m_mainSplitter->setSizes({0, total});
+    }
+
+    QSettings().setValue(QStringLiteral("ui/setupVisible"), m_setupVisible);
+    updateSetupToggleUi();
 }
 
 void MainWindow::onChooseRecordFolder()
@@ -794,6 +910,29 @@ void MainWindow::setupMenuBar()
     auto *exitAct = fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
     exitAct->setShortcut(QKeySequence::Quit);
     exitAct->setMenuRole(QAction::QuitRole);
+
+    auto *viewMenu = menuBar()->addMenu(tr("&View"));
+    m_toggleSetupAct = viewMenu->addAction(tr("Show &setup panel"));
+    m_toggleSetupAct->setCheckable(true);
+    m_toggleSetupAct->setChecked(m_setupVisible);
+    m_toggleSetupAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
+    m_toggleSetupAct->setToolTip(tr("Show or hide device / live / ROI settings."));
+    connect(m_toggleSetupAct, &QAction::toggled, this, [this](bool on) {
+        setSetupPanelVisible(on);
+    });
+
+    m_focusSpectrogramAct = viewMenu->addAction(tr("&Focus spectrogram"), this, [this] {
+        // Hide setup and give waterfall most of the plot height.
+        setSetupPanelVisible(false);
+        if (m_spectrumSplit) {
+            m_savedSpectrumSizes = m_spectrumSplit->sizes();
+            const int h = qMax(200, m_spectrumSplit->height());
+            m_spectrumSplit->setSizes({qMax(80, h / 5), qMax(120, (h * 4) / 5)});
+        }
+    });
+    m_focusSpectrogramAct->setShortcut(QKeySequence(QStringLiteral("F11")));
+    m_focusSpectrogramAct->setToolTip(
+        tr("Hide setup panel and enlarge the spectrogram (waterfall)."));
 
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
     auto *aboutAct = helpMenu->addAction(tr("&About Radiacode Monitor…"), this,
