@@ -10,7 +10,6 @@
 #include <QDateTime>
 #include <QEvent>
 #include <QFileDialog>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
@@ -47,11 +46,12 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
 {
     m_recorder = new RoiTimeSeriesRecorder(this);
 
-    // Controls live in MainWindow top row (next to Live); this panel is chart-only.
-    m_controlsBox = new QGroupBox(tr("ROI time series"), this);
-    m_controlsBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    // Controls live in MainWindow setup ROI tab; this panel is chart-only.
+    m_controlsBox = new QWidget(this);
+    m_controlsBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     auto *ctrlLay = new QVBoxLayout(m_controlsBox);
-    ctrlLay->setContentsMargins(8, 8, 8, 8);
+    ctrlLay->setContentsMargins(6, 6, 6, 6);
+    ctrlLay->setSpacing(6);
 
     auto *rowPreset = new QHBoxLayout;
     rowPreset->addWidget(new QLabel(tr("Preset:"), m_controlsBox));
@@ -97,7 +97,7 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
     rowRoiBtn->addStretch(1);
     ctrlLay->addLayout(rowRoiBtn);
 
-    auto *row1 = new QHBoxLayout;
+    // Stack action buttons so the ROI setup tab can stay narrow.
     m_startBtn = new QPushButton(tr("Start recording"), m_controlsBox);
     m_stopBtn = new QPushButton(tr("Stop"), m_controlsBox);
     m_clearBtn = new QPushButton(tr("Clear"), m_controlsBox);
@@ -107,15 +107,12 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
            "CSV elapsed_s is measured from this time."));
     m_exportBtn = new QPushButton(tr("Export CSV…"), m_controlsBox);
     m_stopBtn->setEnabled(false);
-    row1->addWidget(m_startBtn);
-    row1->addWidget(m_stopBtn);
-    row1->addWidget(m_clearBtn);
-    row1->addWidget(m_t0Btn);
-    row1->addWidget(m_exportBtn);
-    row1->addStretch(1);
-    ctrlLay->addLayout(row1);
+    ctrlLay->addWidget(m_startBtn);
+    ctrlLay->addWidget(m_stopBtn);
+    ctrlLay->addWidget(m_clearBtn);
+    ctrlLay->addWidget(m_t0Btn);
+    ctrlLay->addWidget(m_exportBtn);
 
-    auto *row2 = new QHBoxLayout;
     m_resetOnStart = new QCheckBox(tr("Reset spectrum on start"), m_controlsBox);
     m_resetOnStart->setChecked(true);
     m_resetOnStart->setToolTip(
@@ -126,11 +123,11 @@ RoiTimeSeriesPanel::RoiTimeSeriesPanel(QtRadiacode::RadiaCodeDevice *device, QWi
         m_dwellCombo->addItem(tr("%1 s").arg(s), s);
     }
     m_dwellCombo->setCurrentIndex(2);
-    row2->addWidget(m_resetOnStart);
-    row2->addWidget(new QLabel(tr("Dwell:"), m_controlsBox));
-    row2->addWidget(m_dwellCombo);
-    row2->addStretch(1);
-    ctrlLay->addLayout(row2);
+    ctrlLay->addWidget(m_resetOnStart);
+    auto *dwellRow = new QHBoxLayout;
+    dwellRow->addWidget(new QLabel(tr("Dwell:"), m_controlsBox));
+    dwellRow->addWidget(m_dwellCombo, 1);
+    ctrlLay->addLayout(dwellRow);
 
     m_statusLabel = new QLabel(m_controlsBox);
     m_statusLabel->setWordWrap(true);
@@ -472,18 +469,28 @@ void RoiTimeSeriesPanel::onAddRoi()
 
 void RoiTimeSeriesPanel::onRemoveRoi()
 {
-    if (m_recording) {
+    if (m_recording || !m_roiTable) {
         return;
     }
-    const int row = m_roiTable->currentRow();
-    if (row >= 0) {
-        m_roiTable->removeRow(row);
-        resetRoiRateBaseline();
-        if (m_hasLastSpectrum) {
-            updateRoiLiveStats(m_lastSpectrum);
+    int row = m_roiTable->currentRow();
+    if (row < 0 && m_roiTable->selectionModel()) {
+        const QModelIndexList rows = m_roiTable->selectionModel()->selectedRows();
+        if (!rows.isEmpty()) {
+            row = rows.first().row();
         }
-        emitRoisChanged();
     }
+    if (row < 0 || row >= m_roiTable->rowCount()) {
+        return;
+    }
+    m_blockTableSignal = true;
+    m_roiTable->removeRow(row);
+    m_blockTableSignal = false;
+    resetRoiRateBaseline();
+    if (m_hasLastSpectrum) {
+        updateRoiLiveStats(m_lastSpectrum);
+    }
+    emitRoisChanged();
+    saveSettings();
 }
 
 void RoiTimeSeriesPanel::onTableChanged()
@@ -537,7 +544,13 @@ bool RoiTimeSeriesPanel::eventFilter(QObject *watched, QEvent *event)
     }
 
     // Click anywhere outside the table → deselect row (return to neutral look).
+    // Exception: Remove needs the current row; clearing on MouseButtonPress would
+    // wipe selection before the button's clicked() slot runs.
     if (auto *w = qobject_cast<QWidget *>(watched)) {
+        if (m_removeRoiBtn
+            && (w == m_removeRoiBtn || m_removeRoiBtn->isAncestorOf(w))) {
+            return QWidget::eventFilter(watched, event);
+        }
         if (w != m_roiTable && w != m_roiTable->viewport() && !m_roiTable->isAncestorOf(w)) {
             if (m_roiTable->selectionModel() && m_roiTable->selectionModel()->hasSelection()) {
                 clearRoiTableSelection();

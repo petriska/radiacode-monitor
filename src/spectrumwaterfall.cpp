@@ -40,8 +40,10 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
         "Drag inside selection: move the box · drag edges/corners: resize.\n"
         "Esc / click outside / right-click → Clear selection.\n"
         "Mouse wheel: scroll history · Double-click: jump to live.\n"
+        "Colour bar (right): drag top = sensitivity (ceil), bottom = floor;\n"
+        "wheel over bar = scale; double-click bar = reset to auto 0…max.\n"
         "Right-click menu: Follow live, Go to oldest, PNG, Save/Load history.\n"
-        "Time is 1:1 (one row = one pixel). Colour scale = 0 … max over history."));
+        "Time is 1:1 (one row = one pixel)."));
 }
 
 void SpectrumWaterfall::recomputeCapacity()
@@ -159,6 +161,11 @@ void SpectrumWaterfall::setCalibration(float a0, float a1, float a2)
     update();
 }
 
+bool SpectrumWaterfall::hasEnergyCalibration() const
+{
+    return hasEnergyAxis();
+}
+
 void SpectrumWaterfall::clear()
 {
     m_rows.clear();
@@ -214,16 +221,15 @@ SpectrumWaterfall::SelectionSpectrum SpectrumWaterfall::extractSelectionSpectrum
     }
     const int r0 = qBound(0, m_selection.row0, m_rows.size() - 1);
     const int r1 = qBound(r0, m_selection.row1, m_rows.size() - 1);
-    const int c0 = qBound(0, m_selection.ch0, m_channels);
-    const int c1 = qBound(c0, m_selection.ch1, m_channels);
 
+    // Full energy range over the selected time window (gray + blue highlight in the dialog).
     out.counts = QVector<quint32>(m_channels, 0);
     quint64 liveSum = 0;
     for (int r = r0; r <= r1; ++r) {
         const Row &row = m_rows.at(r);
         liveSum += row.intervalSec;
         const int n = qMin(m_channels, row.deltas.size());
-        for (int ch = c0; ch < c1 && ch < n; ++ch) {
+        for (int ch = 0; ch < n; ++ch) {
             const quint64 v = quint64(out.counts[ch]) + quint64(row.deltas[ch]);
             out.counts[ch] = v > 0xffffffffu ? 0xffffffffu : quint32(v);
         }
@@ -250,20 +256,41 @@ QVector<SpectrumWaterfall::SelectionMcsPoint> SpectrumWaterfall::extractSelectio
         p.wallTime = row.wallTime;
         p.liveTimeSec = row.liveTimeSec;
         p.intervalSec = row.intervalSec;
-        double cps = 0;
-        quint64 counts = 0;
-        const int nR = qMin(m_channels, row.rates.size());
+        // Sum ΔN first, then convert to cps from the row interval so full and
+        // selection series stay consistent (and NaN rates cannot drop a sample).
+        quint64 fullCounts = 0;
+        quint64 selCounts = 0;
         const int nD = qMin(m_channels, row.deltas.size());
-        for (int ch = c0; ch < c1; ++ch) {
-            if (ch < nR) {
-                cps += double(displayRate(row.rates[ch], ch));
-            }
-            if (ch < nD) {
-                counts += row.deltas[ch];
+        for (int ch = 0; ch < nD; ++ch) {
+            fullCounts += row.deltas[ch];
+            if (ch >= c0 && ch < c1) {
+                selCounts += row.deltas[ch];
             }
         }
-        p.cps = cps;
-        p.counts = counts;
+        // Net mode: rates already bake BG subtraction per channel; recompute
+        // cps from displayRate so MCS matches the waterfall view mode.
+        double fullCps = 0;
+        double selCps = 0;
+        if (netModeActive()) {
+            const int nR = qMin(m_channels, row.rates.size());
+            for (int ch = 0; ch < nR; ++ch) {
+                const double rate = double(displayRate(row.rates[ch], ch));
+                if (!std::isfinite(rate)) {
+                    continue;
+                }
+                fullCps += rate;
+                if (ch >= c0 && ch < c1) {
+                    selCps += rate;
+                }
+            }
+        } else if (row.intervalSec > 0) {
+            fullCps = double(fullCounts) / double(row.intervalSec);
+            selCps = double(selCounts) / double(row.intervalSec);
+        }
+        p.fullCps = fullCps;
+        p.fullCounts = fullCounts;
+        p.cps = selCps;
+        p.counts = selCounts;
         out.append(p);
     }
     return out;
@@ -587,10 +614,88 @@ QRect SpectrumWaterfall::plotRect() const
                  std::max(1, height() - kMarginTop - kMarginBottom));
 }
 
+float SpectrumWaterfall::colorMapMin() const
+{
+    return std::max(0.0f, m_displayMax * m_colorFloorFrac);
+}
+
+float SpectrumWaterfall::colorMapMax() const
+{
+    return std::max(1e-9f, m_displayMax * m_colorCeilFrac);
+}
+
+void SpectrumWaterfall::setColorCeilFraction(float frac)
+{
+    const float f = std::clamp(frac, kColorCeilMin, kColorCeilMax);
+    // Keep floor strictly below ceil.
+    float floor = m_colorFloorFrac;
+    if (floor >= f * 0.95f) {
+        floor = std::max(0.0f, f * 0.5f);
+    }
+    if (qAbs(f - m_colorCeilFrac) < 1e-6f && qAbs(floor - m_colorFloorFrac) < 1e-6f) {
+        return;
+    }
+    m_colorCeilFrac = f;
+    m_colorFloorFrac = floor;
+    rebuildViewportImage();
+    update();
+    emit colorScaleChanged(m_colorFloorFrac, m_colorCeilFrac);
+}
+
+void SpectrumWaterfall::setColorFloorFraction(float frac)
+{
+    const float maxFloor = std::min(kColorFloorMax, m_colorCeilFrac * 0.95f);
+    const float f = std::clamp(frac, 0.0f, maxFloor);
+    if (qAbs(f - m_colorFloorFrac) < 1e-6f) {
+        return;
+    }
+    m_colorFloorFrac = f;
+    rebuildViewportImage();
+    update();
+    emit colorScaleChanged(m_colorFloorFrac, m_colorCeilFrac);
+}
+
+void SpectrumWaterfall::resetColorScale()
+{
+    if (qAbs(m_colorCeilFrac - 1.0f) < 1e-6f && m_colorFloorFrac < 1e-6f) {
+        return;
+    }
+    m_colorCeilFrac = 1.0f;
+    m_colorFloorFrac = 0.0f;
+    rebuildViewportImage();
+    update();
+    emit colorScaleChanged(m_colorFloorFrac, m_colorCeilFrac);
+}
+
+QRect SpectrumWaterfall::colorBarRect() const
+{
+    const QRect plot = plotRect();
+    return QRect(plot.right() + kColorBarGap, plot.top(), kColorBarWidth, plot.height());
+}
+
+void SpectrumWaterfall::applyColorScaleFromBarY(int y, bool floorHandle)
+{
+    const QRect bar = colorBarRect();
+    if (bar.height() <= 1) {
+        return;
+    }
+    // Top of bar = high fraction, bottom = low fraction (of auto max).
+    const float t = std::clamp(float(y - bar.top()) / float(bar.height() - 1), 0.0f, 1.0f);
+    const float fromTop = 1.0f - t; // 1 at top, 0 at bottom
+    if (floorHandle) {
+        setColorFloorFraction(std::clamp(fromTop * kColorFloorMax, 0.0f, kColorFloorMax));
+    } else {
+        const float ceil = kColorCeilMin + (kColorCeilMax - kColorCeilMin) * fromTop;
+        setColorCeilFraction(ceil);
+    }
+}
+
 QRgb SpectrumWaterfall::rateToColor(float rate) const
 {
-    const float t = m_displayMax > 1e-12f
-        ? std::clamp(rate / m_displayMax, 0.0f, 1.0f)
+    const float lo = colorMapMin();
+    const float hi = colorMapMax();
+    const float t = (hi > lo + 1e-12f)
+        ? std::clamp((rate - lo) / (hi - lo), 0.0f, 1.0f)
         : 0.0f;
     const float u = std::pow(t, 0.55f);
 
@@ -616,6 +721,70 @@ QRgb SpectrumWaterfall::rateToColor(float rate) const
         b = int(255 * s);
     }
     return qRgb(r, g, b);
+}
+
+void SpectrumWaterfall::drawColorBar(QPainter &p, const QRect &plot) const
+{
+    const QRect bar = colorBarRect();
+    if (bar.height() < 4) {
+        return;
+    }
+
+    // Vertical palette (top = hot / high rate, bottom = cold).
+    for (int y = 0; y < bar.height(); ++y) {
+        const float t = 1.0f - float(y) / float(std::max(1, bar.height() - 1));
+        // Sample palette at t using same gamma as rateToColor (0…1 input).
+        const float u = std::pow(t, 0.55f);
+        int r = 0, g = 0, b = 0;
+        if (u < 0.25f) {
+            const float s = u / 0.25f;
+            b = int(80 + 175 * s);
+        } else if (u < 0.5f) {
+            const float s = (u - 0.25f) / 0.25f;
+            g = int(255 * s);
+            b = 255;
+        } else if (u < 0.75f) {
+            const float s = (u - 0.5f) / 0.25f;
+            r = int(255 * s);
+            g = 255;
+            b = int(255 * (1.0f - s));
+        } else {
+            const float s = (u - 0.75f) / 0.25f;
+            r = 255;
+            g = 255;
+            b = int(255 * s);
+        }
+        p.setPen(QColor(r, g, b));
+        p.drawLine(bar.left(), bar.top() + y, bar.right(), bar.top() + y);
+    }
+    p.setPen(QColor(90, 94, 100));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(bar);
+
+    // Markers for current floor/ceil relative to auto max (0…ceilMax span on bar).
+    auto fracToY = [&](float frac) -> int {
+        // frac 0 at bottom, 1 at top of bar (relative to 0…kColorCeilMax mapping for ceil handle)
+        const float norm = std::clamp(frac / kColorCeilMax, 0.0f, 1.0f);
+        return bar.bottom() - int(std::lround(norm * (bar.height() - 1)));
+    };
+    const int yCeil = fracToY(m_colorCeilFrac);
+    const int yFloor = fracToY(m_colorFloorFrac);
+
+    p.setPen(QPen(QColor(255, 240, 180), 2));
+    p.drawLine(bar.left() - 1, yCeil, bar.right() + 1, yCeil);
+    if (m_colorFloorFrac > 1e-4f) {
+        p.setPen(QPen(QColor(180, 200, 255), 2));
+        p.drawLine(bar.left() - 1, yFloor, bar.right() + 1, yFloor);
+    }
+
+    // Scale % of auto max (top marker).
+    const QFontMetrics fm = p.fontMetrics();
+    p.setPen(QColor(170, 172, 180));
+    const QString pct = QStringLiteral("%1%").arg(int(std::lround(double(m_colorCeilFrac) * 100.0)));
+    p.drawText(bar.left() + (bar.width() - fm.horizontalAdvance(pct)) / 2,
+               bar.top() - 2, pct);
+
+    Q_UNUSED(plot);
 }
 
 bool SpectrumWaterfall::makeRow(const Snapshot &prev, const Snapshot &cur, Row *out) const
@@ -1001,6 +1170,20 @@ void SpectrumWaterfall::setCursorFromPos(const QPoint &pos)
 
 void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
 {
+    // SDR-style colour bar (right of plot): adjust map floor/ceil.
+    if (event->button() == Qt::LeftButton && colorBarRect().contains(event->pos())) {
+        setFocus(Qt::MouseFocusReason);
+        m_colorBarDragging = true;
+        // Top 55% of bar → ceil (sensitivity); bottom → floor (noise cut).
+        const QRect bar = colorBarRect();
+        m_colorBarDragFloor =
+            (event->pos().y() - bar.top()) > int(bar.height() * 0.55);
+        applyColorScaleFromBarY(event->pos().y(), m_colorBarDragFloor);
+        grabMouse();
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton && plotRect().contains(event->pos())
         && !m_rows.isEmpty()) {
         m_selectDragMoved = false;
@@ -1053,6 +1236,12 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
 
 void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_colorBarDragging) {
+        applyColorScaleFromBarY(event->pos().y(), m_colorBarDragFloor);
+        event->accept();
+        return;
+    }
+
     if (m_selectResizing) {
         m_selectCurrPos = event->pos();
         if ((event->pos() - m_selectPressPos).manhattanLength() >= kSelectDragThresholdPx
@@ -1100,6 +1289,11 @@ void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
+    if (colorBarRect().contains(event->pos())) {
+        setCursor(Qt::SizeVerCursor);
+        event->accept();
+        return;
+    }
     applySelectionHoverCursor(event->pos());
     setCursorFromPos(event->pos());
     event->accept();
@@ -1107,6 +1301,15 @@ void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
 
 void SpectrumWaterfall::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton && m_colorBarDragging) {
+        m_colorBarDragging = false;
+        if (mouseGrabber() == this) {
+            releaseMouse();
+        }
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton
         && (m_selectDragging || m_selectMoving || m_selectResizing)) {
         if (mouseGrabber() == this) {
@@ -1179,11 +1382,17 @@ void SpectrumWaterfall::mouseDoubleClickEvent(QMouseEvent *event)
         if (mouseGrabber() == this) {
             releaseMouse();
         }
+        m_colorBarDragging = false;
         m_selectDragging = false;
         m_selectMoving = false;
         m_selectResizing = false;
         m_selectDragMoved = false;
         m_resizeEdges = 0;
+        if (colorBarRect().contains(event->pos())) {
+            resetColorScale();
+            event->accept();
+            return;
+        }
         followLive();
         event->accept();
         return;
@@ -1218,6 +1427,11 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
     QAction *clearSelAct = menu.addAction(tr("Clear selection"));
     clearSelAct->setEnabled(m_selection.valid);
     clearSelAct->setToolTip(tr("Remove the analysis rectangle (Esc)."));
+
+    QAction *resetColorAct = menu.addAction(tr("Reset colour scale"));
+    resetColorAct->setToolTip(
+        tr("Map colours to full auto range (0 … max rate over history).\n"
+           "Same as double-click on the colour bar."));
 
     menu.addSeparator();
 
@@ -1273,6 +1487,8 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         goToOldest();
     } else if (chosen == clearSelAct) {
         clearSelection();
+    } else if (chosen == resetColorAct) {
+        resetColorScale();
     } else if (chosen == specAct) {
         emit extractSpectrumRequested();
     } else if (chosen == mcsAct) {
@@ -1553,13 +1769,27 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     emitScrollSignals();
     update();
 
+    QString calLine;
+    if (hasEnergyCalibration()) {
+        calLine = tr("\nEnergy calibration: a0=%1  a1=%2  a2=%3")
+                      .arg(double(m_a0), 0, 'g', 6)
+                      .arg(double(m_a1), 0, 'g', 6)
+                      .arg(double(m_a2), 0, 'g', 6);
+    } else {
+        calLine = tr("\nEnergy calibration: none in file (channel axis only).");
+    }
+    if (!m_deviceSerial.isEmpty()) {
+        calLine += tr("\nSerial: %1").arg(m_deviceSerial);
+    }
+
     QMessageBox::information(
         dialogParent ? dialogParent : this,
         tr("Load history"),
-        tr("Loaded %1 rows (%2 channels) from\n%3")
+        tr("Loaded %1 rows (%2 channels) from\n%3%4")
             .arg(m_rows.size())
             .arg(m_channels)
-            .arg(QFileInfo(path).fileName()));
+            .arg(QFileInfo(path).fileName())
+            .arg(calLine));
     return true;
 }
 
@@ -1765,9 +1995,21 @@ bool SpectrumWaterfall::exportAsPng(PngExportScope scope, QWidget *dialogParent)
 
 void SpectrumWaterfall::wheelEvent(QWheelEvent *event)
 {
-    // Vertical wheel pans time history (SDR-style). Angle delta: 120 ≈ one notch.
     const int delta = event->angleDelta().y();
-    if (delta == 0 || m_rows.isEmpty()) {
+    if (delta == 0) {
+        event->ignore();
+        return;
+    }
+
+    // Wheel over colour bar → scale colour range (SDR-style gain).
+    if (colorBarRect().contains(event->position().toPoint())) {
+        const float factor = (delta > 0) ? 0.85f : (1.0f / 0.85f);
+        setColorCeilFraction(m_colorCeilFrac * factor);
+        event->accept();
+        return;
+    }
+
+    if (m_rows.isEmpty()) {
         event->ignore();
         return;
     }
@@ -1942,6 +2184,8 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
         const QRectF src(x0, 0.0, x1 - x0, double(m_image.height()));
         p.drawImage(tv.dest, m_image, src);
     }
+
+    drawColorBar(p, plot);
 
     const QFontMetrics fm = p.fontMetrics();
 

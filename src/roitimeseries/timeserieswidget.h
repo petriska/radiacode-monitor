@@ -3,6 +3,7 @@
 #include "roitimeseries/roirecorder.h"
 
 #include <QColor>
+#include <QHash>
 #include <QVector>
 #include <QWidget>
 
@@ -12,8 +13,13 @@ class TimeSeriesWidget : public QWidget {
 public:
     explicit TimeSeriesWidget(QWidget *parent = nullptr);
 
+    /// colorOverrides: optional per-series id → colour (e.g. "gross", "selection").
     void setSamples(const QVector<RoiTimeSample> &samples, bool hasT0, const QDateTime &t0,
-                    const QVector<RoiWindow> &roiOrder = {});
+                    const QVector<RoiWindow> &roiOrder = {},
+                    const QHash<QString, QColor> &colorOverrides = {});
+    /// When true, Y uses log(1+y) so zeros stay valid; otherwise linear.
+    void setLogYScale(bool on);
+    bool logYScale() const { return m_logY; }
     void clear();
 
 protected:
@@ -27,6 +33,8 @@ private:
         QVector<QPointF> points;
     };
 
+    double yNorm(double y) const;
+
     QVector<Series> m_series;
     bool m_hasT0 = false;
     double m_t0Elapsed = 0;
@@ -34,4 +42,5 @@ private:
     double m_xMin = 0;
     double m_xMax = 1;
     double m_yMax = 1;
+    bool m_logY = false;
 };

@@ -100,6 +100,9 @@ private:
     int findDeviceRow(const QString &transport, const QString &id) const;
     void updateAcquisitionUi();
     void abortAcquisitionIfActive(const QString &reason);
+    /// Freeze Live spectrum plot at the end of an acquisition run (device still counts).
+    void holdAcquisitionSpectrum(const QtRadiacode::RcSpectrum &sp, const QString &reason);
+    void clearAcquisitionSpectrumHold();
     void updateBackgroundUi();
     void refreshSpectrumDisplay();
     /// Spectrum currently shown / saved (live, stored BG, or net).
@@ -139,6 +142,7 @@ private:
     QPushButton *m_loadBgBtn = nullptr;
     QSpinBox *m_waterfallIntegrateSpin = nullptr;
     QComboBox *m_waterfallHistoryCombo = nullptr;
+    QSpinBox *m_waterfallColorScaleSpin = nullptr;
     QPushButton *m_waterfallLiveBtn = nullptr;
     QCheckBox *m_recordSpectrogramCheck = nullptr;
     QPushButton *m_recordFolderBtn = nullptr;
@@ -154,8 +158,12 @@ private:
     QSpinBox *m_acqTargetSpin = nullptr;
     QPushButton *m_acqStartBtn = nullptr;
     QPushButton *m_acqStopBtn = nullptr;
+    QPushButton *m_acqResumeLiveBtn = nullptr;
     QProgressBar *m_acqProgressBar = nullptr;
     QLabel *m_acqProgressLabel = nullptr;
+    /// When true, Live/Net spectrum plot shows m_acqHeldSpectrum (device still accumulates).
+    bool m_acqSpectrumHold = false;
+    QtRadiacode::RcSpectrum m_acqHeldSpectrum;
 
     QLabel *m_statusLabel = nullptr;
     QLabel *m_serialLabel = nullptr;

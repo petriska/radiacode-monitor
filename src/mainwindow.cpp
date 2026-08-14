@@ -24,6 +24,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QMenu>
@@ -92,32 +93,28 @@ MainWindow::MainWindow(QWidget *parent)
     m_setupToggleBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
     m_setupToggleBtn->setFixedWidth(22);
     m_setupToggleBtn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    m_setupToggleBtn->setToolTip(tr("Show or hide the setup panel (device, live, ROI)."));
+    m_setupToggleBtn->setToolTip(
+        tr("Show or hide the setup panel (Device / Spectrum / ROI tabs)."));
     root->addWidget(m_setupToggleBtn, 0);
 
+    // --- Setup column: Device | Spectrum | ROI ---
     m_setupPanel = new QWidget(this);
     auto *setupLay = new QVBoxLayout(m_setupPanel);
     setupLay->setContentsMargins(0, 0, 0, 0);
-    setupLay->setSpacing(6);
+    setupLay->setSpacing(0);
 
-    auto *liveBox = new QGroupBox(tr("Live"), m_setupPanel);
-    auto *liveLay = new QVBoxLayout(liveBox);
-    liveLay->setContentsMargins(8, 8, 8, 8);
-    liveLay->setSpacing(4);
-    auto *form = new QFormLayout;
-    form->setHorizontalSpacing(10);
-    form->setVerticalSpacing(3);
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto *setupTabs = new QTabWidget(m_setupPanel);
+    setupTabs->setDocumentMode(true);
+    setupTabs->setMovable(false);
+    setupTabs->setUsesScrollButtons(true);
+    setupTabs->setElideMode(Qt::ElideRight);
 
+    // Shared labels (Device status + Spectrum live stats).
     m_statusLabel = new QLabel(tr("Disconnected"), this);
-    // Kept off the main form (space); still updated for status tooltip / future UI.
     m_serialLabel = new QLabel(QStringLiteral("—"), this);
     m_fwLabel = new QLabel(QStringLiteral("—"), this);
     m_doseLabel = new QLabel(QStringLiteral("—"), this);
-    m_serialLabel->setVisible(false);
-    m_fwLabel->setVisible(false);
     m_doseLabel->setVisible(false);
-
     m_countLabel = new QLabel(QStringLiteral("—"), this);
     m_tempLabel = new QLabel(QStringLiteral("—"), this);
     m_spectrumLiveLabel = new QLabel(QStringLiteral("—"), this);
@@ -133,240 +130,296 @@ MainWindow::MainWindow(QWidget *parent)
     m_signalLabel->setToolTip(
         tr("BLE link strength (RSSI). USB shows n/a.\n"
            "Updated from scan and about once per minute while connected (if the stack supports it)."));
-    form->addRow(tr("Status"), m_statusLabel);
-    form->addRow(tr("Count rate (CPS)"), m_countLabel);
-    form->addRow(tr("Temperature"), m_tempLabel);
-    form->addRow(tr("Battery"), m_batteryLabel);
-    form->addRow(tr("BLE signal"), m_signalLabel);
-    form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
-    form->addRow(tr("Spectrum total counts"), m_spectrumTotalLabel);
 
-    m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), this);
-    m_resetSpectrumBtn->setToolTip(
-        tr("Clear the spectrum accumulation on the device.\n"
-           "The plot auto-refreshes about every 2 seconds while connected."));
-    m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), this);
-    m_saveSpectrumBtn->setToolTip(
-        tr("Save the spectrum currently shown (Live / Background / Net)\n"
-           "as CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON."));
-    auto *spectrumActions = new QHBoxLayout;
-    spectrumActions->setSpacing(6);
-    spectrumActions->addWidget(m_resetSpectrumBtn);
-    spectrumActions->addWidget(m_saveSpectrumBtn);
-    spectrumActions->addStretch(1);
-    form->addRow(QString(), spectrumActions);
-
-    m_spectrumViewCombo = new QComboBox(this);
-    m_spectrumViewCombo->addItem(tr("Live"), int(SpectrumView::Live));
-    m_spectrumViewCombo->addItem(tr("Background"), int(SpectrumView::Background));
-    m_spectrumViewCombo->addItem(tr("Net (Live − BG)"), int(SpectrumView::Net));
-    m_spectrumViewCombo->setToolTip(
-        tr("What the spectrum plot shows (enabled after a background is loaded).\n"
-           "Live: current device spectrum.\n"
-           "Background: loaded BG spectrum.\n"
-           "Net: Live − BG scaled by live-time ratio (negative bins → 0).\n\n"
-           "Workflow: Save spectrum → Load BG… → choose Background or Net."));
-    m_spectrumViewCombo->setEnabled(false);
-    m_loadBgBtn = new QPushButton(tr("Load BG…"), this);
-    m_loadBgBtn->setToolTip(
-        tr("Load a background spectrum from file (CSV, TKA, N42, NPES-JSON).\n"
-           "Save a spectrum first if you want to reuse a measurement as BG."));
-    m_bgStatusLabel = new QLabel(tr("BG: none — Load BG… to enable view modes"), this);
-    m_bgStatusLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
-    m_bgStatusLabel->setWordWrap(true);
-    auto *bgRow = new QHBoxLayout;
-    bgRow->setSpacing(6);
-    bgRow->addWidget(m_spectrumViewCombo, 1);
-    bgRow->addWidget(m_loadBgBtn);
-    form->addRow(tr("View"), bgRow);
-    form->addRow(QString(), m_bgStatusLabel);
-
-    m_waterfallIntegrateSpin = new QSpinBox(this);
-    m_waterfallIntegrateSpin->setRange(1, 32);
-    m_waterfallIntegrateSpin->setValue(1);
-    m_waterfallIntegrateSpin->setSuffix(tr(" polls"));
-    m_waterfallIntegrateSpin->setToolTip(
-        tr("Spectrogram integrate: each display row sums N spectrum updates.\n"
-           "1 = every poll (~1 s per row). Higher N = coarser time, more wall-clock\n"
-           "history for the same row budget."));
-    form->addRow(tr("Waterfall integrate"), m_waterfallIntegrateSpin);
-
-    m_waterfallHistoryCombo = new QComboBox(this);
-    m_waterfallHistoryCombo->addItem(tr("15 min"), 15);
-    m_waterfallHistoryCombo->addItem(tr("30 min"), 30);
-    m_waterfallHistoryCombo->addItem(tr("1 hour"), 60);
-    m_waterfallHistoryCombo->addItem(tr("2 hours"), 120);
-    m_waterfallHistoryCombo->addItem(tr("4 hours"), 240);
-    m_waterfallHistoryCombo->setCurrentIndex(3); // 2 h default
-    m_waterfallHistoryCombo->setToolTip(
-        tr("How much spectrogram history to keep in memory.\n"
-           "Row count ≈ minutes × 60 / integrate (1 s polls).\n"
-           "Wheel over the waterfall scrolls history; double-click returns to live."));
-    form->addRow(tr("Waterfall history"), m_waterfallHistoryCombo);
-
-    m_waterfallLiveBtn = new QPushButton(tr("Follow live"), this);
-    m_waterfallLiveBtn->setEnabled(false);
-    m_waterfallLiveBtn->setToolTip(
-        tr("Jump the spectrogram viewport to the newest data (also: double-click waterfall)."));
-    form->addRow(QString(), m_waterfallLiveBtn);
-
-    m_recordSpectrogramCheck = new QCheckBox(tr("Record continuously"), this);
-    m_recordSpectrogramCheck->setToolTip(
-        tr("Append every spectrogram row to a daily .rcsg file on disk\n"
-           "(…/spectrograms/<serial>/YYYY-MM-DD.rcsg).\n"
-           "Same day: append after restart. Past days: gzip → .rcsg.gz; old files pruned."));
-    form->addRow(QString(), m_recordSpectrogramCheck);
-
-    m_recordFolderBtn = new QPushButton(tr("Recording folder…"), this);
-    m_recordFolderBtn->setToolTip(tr("Choose the base directory for continuous spectrogram files."));
-    form->addRow(QString(), m_recordFolderBtn);
-
-    m_recordKeepDaysCombo = new QComboBox(this);
-    m_recordKeepDaysCombo->addItem(tr("7 days"), 7);
-    m_recordKeepDaysCombo->addItem(tr("14 days"), 14);
-    m_recordKeepDaysCombo->addItem(tr("30 days"), 30);
-    m_recordKeepDaysCombo->addItem(tr("90 days"), 90);
-    m_recordKeepDaysCombo->addItem(tr("1 year"), 365);
-    m_recordKeepDaysCombo->setCurrentIndex(2); // 30
-    m_recordKeepDaysCombo->setToolTip(
-        tr("Delete spectrogram day files older than this (raw .rcsg and .rcsg.gz).\n"
-           "When a day rolls over, the closed file is gzip-compressed."));
-    form->addRow(tr("Keep recordings"), m_recordKeepDaysCombo);
-
-    m_recordStatusLabel = new QLabel(tr("Recording: off"), this);
-    m_recordStatusLabel->setWordWrap(true);
-    m_recordStatusLabel->setStyleSheet(QStringLiteral("color: #888; font-size: 11px;"));
-    form->addRow(QString(), m_recordStatusLabel);
-
-    liveLay->addLayout(form);
-
-    // Acquisition run: stop by device live time or total spectrum counts.
-    auto *acqBox = new QGroupBox(tr("Acquisition"), this);
-    auto *acqLay = new QVBoxLayout(acqBox);
-    acqLay->setContentsMargins(6, 6, 6, 6);
-    acqLay->setSpacing(4);
-    auto *acqModeRow = new QHBoxLayout;
-    acqModeRow->setSpacing(6);
-    m_acqModeCombo = new QComboBox(this);
-    m_acqModeCombo->addItem(tr("Time (live s)"),
-                            int(AcquisitionController::Mode::TimeSeconds));
-    m_acqModeCombo->addItem(tr("Total counts"),
-                            int(AcquisitionController::Mode::TotalCounts));
-    m_acqModeCombo->setToolTip(
-        tr("Stop condition for a measurement run.\n"
-           "Time uses the device spectrum live time (not wall clock).\n"
-           "Total counts = sum of all spectrum channels.\n"
-           "Stop is checked after each full spectrum (± one poll frame)."));
-    m_acqTargetSpin = new QSpinBox(this);
-    m_acqTargetSpin->setRange(1, 2000000000);
-    m_acqTargetSpin->setValue(300);
-    m_acqTargetSpin->setToolTip(tr("Target live time in seconds, or total counts."));
-    acqModeRow->addWidget(m_acqModeCombo, 1);
-    acqModeRow->addWidget(m_acqTargetSpin);
-    acqLay->addLayout(acqModeRow);
-
-    auto *acqBtnRow = new QHBoxLayout;
-    acqBtnRow->setSpacing(6);
-    m_acqStartBtn = new QPushButton(tr("Start"), this);
-    m_acqStopBtn = new QPushButton(tr("Stop"), this);
-    m_acqStartBtn->setToolTip(
-        tr("Start acquisition until the target is reached.\n"
-           "If the spectrum already has data, you can Continue, Reset and start, "
-           "or Save first."));
-    m_acqStopBtn->setToolTip(tr("Abort the current acquisition run"));
-    acqBtnRow->addWidget(m_acqStartBtn);
-    acqBtnRow->addWidget(m_acqStopBtn);
-    acqBtnRow->addStretch(1);
-    acqLay->addLayout(acqBtnRow);
-
-    m_acqProgressBar = new QProgressBar(this);
-    m_acqProgressBar->setRange(0, 1000); // 0.1 % resolution
-    m_acqProgressBar->setValue(0);
-    m_acqProgressBar->setTextVisible(true);
-    m_acqProgressBar->setFormat(tr("%p%"));
-    m_acqProgressBar->setMinimumHeight(16);
-    m_acqProgressBar->setMaximumHeight(18);
-    m_acqProgressBar->setToolTip(
-        tr("Acquisition progress toward the time or count target."));
-    acqLay->addWidget(m_acqProgressBar);
-
-    m_acqProgressLabel = new QLabel(tr("—"), this);
-    m_acqProgressLabel->setWordWrap(true);
-    m_acqProgressLabel->setStyleSheet(QStringLiteral("color: #bbb;"));
-    acqLay->addWidget(m_acqProgressLabel);
-    liveLay->addWidget(acqBox);
-    liveBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-
-    auto *connBox = new QGroupBox(tr("Device"), m_setupPanel);
-    auto *connLay = new QVBoxLayout(connBox);
-    connLay->setContentsMargins(8, 6, 8, 6);
-    connLay->setSpacing(4);
-    // Narrow setup column: combo full-width, buttons on a second row.
-    m_deviceCombo = new QComboBox(this);
+    // --- Device tab ---
+    auto *devicePage = new QWidget(setupTabs);
+    auto *connLay = new QVBoxLayout(devicePage);
+    connLay->setContentsMargins(8, 8, 8, 8);
+    connLay->setSpacing(6);
+    m_deviceCombo = new QComboBox(devicePage);
     m_deviceCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_deviceCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     m_deviceCombo->setMinimumContentsLength(12);
     m_deviceCombo->setMinimumWidth(0);
-    m_refreshBtn = new QPushButton(tr("Refresh"), this);
-    m_connectBtn = new QPushButton(tr("Connect"), this);
-    m_disconnectBtn = new QPushButton(tr("Disconnect"), this);
+    m_refreshBtn = new QPushButton(tr("Refresh"), devicePage);
+    m_connectBtn = new QPushButton(tr("Connect"), devicePage);
+    m_disconnectBtn = new QPushButton(tr("Disconnect"), devicePage);
     m_refreshBtn->setToolTip(
         tr("Re-scan USB and BLE for Radiacode devices.\n"
            "BLE: device must be free (not held by phone or Home Assistant)."));
     m_connectBtn->setToolTip(tr("Connect via USB or BLE to the selected device"));
     m_disconnectBtn->setToolTip(tr("Close connection and release the device"));
     connLay->addWidget(m_deviceCombo);
-    auto *connBtnRow = new QHBoxLayout;
-    connBtnRow->setSpacing(4);
-    connBtnRow->addWidget(m_refreshBtn, 1);
-    connBtnRow->addWidget(m_connectBtn, 1);
-    connBtnRow->addWidget(m_disconnectBtn, 1);
-    connLay->addLayout(connBtnRow);
-    // Serial / firmware on two compact lines for narrow width.
-    m_serialLabel->setVisible(true);
-    m_fwLabel->setVisible(true);
+    auto *connBtnCol = new QVBoxLayout;
+    connBtnCol->setSpacing(4);
+    connBtnCol->addWidget(m_connectBtn);
+    connBtnCol->addWidget(m_refreshBtn);
+    connBtnCol->addWidget(m_disconnectBtn);
+    connLay->addLayout(connBtnCol);
+
     m_serialLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
     m_fwLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
     m_serialLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_fwLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_serialLabel->setWordWrap(true);
     auto *metaForm = new QFormLayout;
-    metaForm->setContentsMargins(0, 2, 0, 0);
+    metaForm->setContentsMargins(0, 4, 0, 0);
     metaForm->setHorizontalSpacing(8);
-    metaForm->setVerticalSpacing(2);
+    metaForm->setVerticalSpacing(3);
+    metaForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     metaForm->addRow(tr("Serial"), m_serialLabel);
     metaForm->addRow(tr("FW"), m_fwLabel);
+    metaForm->addRow(tr("Status"), m_statusLabel);
+    metaForm->addRow(tr("Battery"), m_batteryLabel);
+    metaForm->addRow(tr("BLE signal"), m_signalLabel);
     connLay->addLayout(metaForm);
-    connBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    connLay->addStretch(1);
+    setupTabs->addTab(devicePage, tr("Device"));
 
-    // Setup stack: Device on top, Live+Acquisition, then ROI controls (scrollable).
-    setupLay->addWidget(connBox);
-    setupLay->addWidget(liveBox);
+    // --- Spectrum tab: Status | Run | Spectrum file/view | Spectrogram ---
+    auto *spectrumPage = new QWidget;
+    auto *specLay = new QVBoxLayout(spectrumPage);
+    specLay->setContentsMargins(6, 6, 6, 6);
+    specLay->setSpacing(8);
 
-    m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
-    if (QWidget *roiCtrl = m_roiPanel->controlsWidget()) {
-        roiCtrl->setMinimumWidth(260);
-        roiCtrl->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-        auto *roiBox = new QGroupBox(tr("ROI"), m_setupPanel);
-        auto *roiLay = new QVBoxLayout(roiBox);
-        roiLay->setContentsMargins(6, 6, 6, 6);
-        roiLay->addWidget(roiCtrl);
-        setupLay->addWidget(roiBox, 1);
-    } else {
-        setupLay->addStretch(1);
+    auto makeSection = [](const QString &title, QWidget *parent) {
+        auto *box = new QGroupBox(title, parent);
+        auto *lay = new QVBoxLayout(box);
+        lay->setContentsMargins(8, 8, 8, 8);
+        lay->setSpacing(4);
+        return std::pair<QGroupBox *, QVBoxLayout *>{box, lay};
+    };
+
+    // Status
+    {
+        auto [box, lay] = makeSection(tr("Status"), spectrumPage);
+        auto *form = new QFormLayout;
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(3);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->addRow(tr("Count rate (CPS)"), m_countLabel);
+        form->addRow(tr("Temperature"), m_tempLabel);
+        form->addRow(tr("Spectrum live time"), m_spectrumLiveLabel);
+        form->addRow(tr("Spectrum total counts"), m_spectrumTotalLabel);
+        lay->addLayout(form);
+        specLay->addWidget(box);
     }
 
-    m_setupPanel->setMinimumWidth(280);
-    m_setupPanel->setMaximumWidth(400);
-    m_setupPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    // Run (timed / count acquisition)
+    {
+        auto [box, lay] = makeSection(tr("Run"), spectrumPage);
+        m_acqModeCombo = new QComboBox(box);
+        m_acqModeCombo->addItem(tr("Time (live s)"),
+                                int(AcquisitionController::Mode::TimeSeconds));
+        m_acqModeCombo->addItem(tr("Total counts"),
+                                int(AcquisitionController::Mode::TotalCounts));
+        m_acqModeCombo->setToolTip(
+            tr("Target for a measurement run (not a hardware shutter).\n"
+               "Time uses the device spectrum live time (not wall clock).\n"
+               "Total counts = sum of all spectrum channels.\n"
+               "When the target is hit, the app freezes the spectrum plot for Save;\n"
+               "the detector keeps counting until you Reset spectrum.\n"
+               "Checked after each full spectrum (± one poll frame)."));
+        m_acqTargetSpin = new QSpinBox(box);
+        m_acqTargetSpin->setRange(1, 2000000000);
+        m_acqTargetSpin->setValue(300);
+        m_acqTargetSpin->setToolTip(tr("Target live time in seconds, or total counts."));
+        lay->addWidget(m_acqModeCombo);
+        lay->addWidget(m_acqTargetSpin);
 
-    auto *setupScroll = new QScrollArea(this);
-    setupScroll->setWidget(m_setupPanel);
-    setupScroll->setWidgetResizable(true);
-    setupScroll->setFrameShape(QFrame::NoFrame);
-    setupScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setupScroll->setMinimumWidth(0);
-    setupScroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        m_acqStartBtn = new QPushButton(tr("Start"), box);
+        m_acqStopBtn = new QPushButton(tr("Stop"), box);
+        m_acqResumeLiveBtn = new QPushButton(tr("Resume live spectrum"), box);
+        m_acqResumeLiveBtn->setEnabled(false);
+        m_acqStartBtn->setToolTip(
+            tr("Start a timed / count-based measurement run.\n"
+               "When the target is reached (or you press Stop), the spectrum plot\n"
+               "is frozen at that snapshot so you can Save it.\n"
+               "The device itself keeps accumulating in the background until Reset.\n"
+               "If the spectrum already has data, you can Continue, Reset and start, "
+               "or Save first."));
+        m_acqStopBtn->setToolTip(
+            tr("End the run early and freeze the spectrum plot at the current snapshot.\n"
+               "Does not reset the device — use Reset spectrum for that."));
+        m_acqResumeLiveBtn->setToolTip(
+            tr("Unfreeze the spectrum plot and follow the live device spectrum again.\n"
+               "(Waterfall always stays live.)"));
+        lay->addWidget(m_acqStartBtn);
+        lay->addWidget(m_acqStopBtn);
+        lay->addWidget(m_acqResumeLiveBtn);
+
+        m_acqProgressBar = new QProgressBar(box);
+        m_acqProgressBar->setRange(0, 1000);
+        m_acqProgressBar->setValue(0);
+        m_acqProgressBar->setTextVisible(true);
+        m_acqProgressBar->setFormat(tr("%p%"));
+        m_acqProgressBar->setMinimumHeight(16);
+        m_acqProgressBar->setMaximumHeight(18);
+        m_acqProgressBar->setToolTip(
+            tr("Acquisition progress toward the time or count target."));
+        lay->addWidget(m_acqProgressBar);
+
+        m_acqProgressLabel = new QLabel(tr("—"), box);
+        m_acqProgressLabel->setWordWrap(true);
+        m_acqProgressLabel->setStyleSheet(QStringLiteral("color: #bbb;"));
+        lay->addWidget(m_acqProgressLabel);
+        specLay->addWidget(box);
+    }
+
+    // Spectrum file / view
+    {
+        auto [box, lay] = makeSection(tr("Spectrum"), spectrumPage);
+        m_resetSpectrumBtn = new QPushButton(tr("Reset spectrum"), box);
+        m_resetSpectrumBtn->setToolTip(
+            tr("Clear the spectrum accumulation on the device.\n"
+               "Also clears a frozen acquisition snapshot.\n"
+               "The plot auto-refreshes about every 2 seconds while connected."));
+        m_saveSpectrumBtn = new QPushButton(tr("Save spectrum…"), box);
+        m_saveSpectrumBtn->setToolTip(
+            tr("Save the spectrum currently shown (Live / Background / Net),\n"
+               "including a frozen acquisition snapshot.\n"
+               "Formats: CSV, TKA, ANSI/IEEE N42.42, or NPES-JSON."));
+        lay->addWidget(m_resetSpectrumBtn);
+        lay->addWidget(m_saveSpectrumBtn);
+
+        m_spectrumViewCombo = new QComboBox(box);
+        m_spectrumViewCombo->addItem(tr("Live"), int(SpectrumView::Live));
+        m_spectrumViewCombo->addItem(tr("Background"), int(SpectrumView::Background));
+        m_spectrumViewCombo->addItem(tr("Net (Live − BG)"), int(SpectrumView::Net));
+        m_spectrumViewCombo->setToolTip(
+            tr("What the spectrum plot shows (enabled after a background is loaded).\n"
+               "Live: current device spectrum (or frozen acquisition snapshot).\n"
+               "Background: loaded BG spectrum.\n"
+               "Net: Live − BG scaled by live-time ratio (negative bins → 0).\n\n"
+               "Workflow: Save spectrum → Load BG… → choose Background or Net."));
+        m_spectrumViewCombo->setEnabled(false);
+        lay->addWidget(m_spectrumViewCombo);
+
+        m_loadBgBtn = new QPushButton(tr("Load BG…"), box);
+        m_loadBgBtn->setToolTip(
+            tr("Load a background spectrum from file (CSV, TKA, N42, NPES-JSON).\n"
+               "Save a spectrum first if you want to reuse a measurement as BG."));
+        lay->addWidget(m_loadBgBtn);
+
+        m_bgStatusLabel = new QLabel(tr("BG: none — Load BG… to enable view modes"), box);
+        m_bgStatusLabel->setStyleSheet(QStringLiteral("color: #aaa;"));
+        m_bgStatusLabel->setWordWrap(true);
+        lay->addWidget(m_bgStatusLabel);
+        specLay->addWidget(box);
+    }
+
+    // Spectrogram / waterfall
+    {
+        auto [box, lay] = makeSection(tr("Spectrogram"), spectrumPage);
+        auto *form = new QFormLayout;
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(3);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+        m_waterfallIntegrateSpin = new QSpinBox(box);
+        m_waterfallIntegrateSpin->setRange(1, 32);
+        m_waterfallIntegrateSpin->setValue(1);
+        m_waterfallIntegrateSpin->setSuffix(tr(" polls"));
+        m_waterfallIntegrateSpin->setToolTip(
+            tr("Spectrogram integrate: each display row sums N spectrum updates.\n"
+               "1 = every poll (~1 s per row). Higher N = coarser time, more wall-clock\n"
+               "history for the same row budget."));
+        form->addRow(tr("Integrate"), m_waterfallIntegrateSpin);
+
+        m_waterfallHistoryCombo = new QComboBox(box);
+        m_waterfallHistoryCombo->addItem(tr("15 min"), 15);
+        m_waterfallHistoryCombo->addItem(tr("30 min"), 30);
+        m_waterfallHistoryCombo->addItem(tr("1 hour"), 60);
+        m_waterfallHistoryCombo->addItem(tr("2 hours"), 120);
+        m_waterfallHistoryCombo->addItem(tr("4 hours"), 240);
+        m_waterfallHistoryCombo->setCurrentIndex(3); // 2 h default
+        m_waterfallHistoryCombo->setToolTip(
+            tr("How much spectrogram history to keep in memory.\n"
+               "Row count ≈ minutes × 60 / integrate (1 s polls).\n"
+               "Wheel over the waterfall scrolls history; double-click returns to live."));
+        form->addRow(tr("History"), m_waterfallHistoryCombo);
+
+        m_waterfallColorScaleSpin = new QSpinBox(box);
+        m_waterfallColorScaleSpin->setRange(5, 200);
+        m_waterfallColorScaleSpin->setValue(100);
+        m_waterfallColorScaleSpin->setSuffix(tr(" %"));
+        m_waterfallColorScaleSpin->setToolTip(
+            tr("Colour scale top as %% of auto max rate over history (SDR-style).\n"
+               "Lower %% = more sensitive (weak rates use more of the palette).\n"
+               "Also adjustable on the colour bar at the right of the spectrogram:\n"
+               "drag top / wheel = sensitivity, bottom = floor, double-click = reset."));
+        form->addRow(tr("Colour scale"), m_waterfallColorScaleSpin);
+        lay->addLayout(form);
+
+        m_waterfallLiveBtn = new QPushButton(tr("Follow live"), box);
+        m_waterfallLiveBtn->setEnabled(false);
+        m_waterfallLiveBtn->setToolTip(
+            tr("Jump the spectrogram viewport to the newest data (also: double-click waterfall)."));
+        lay->addWidget(m_waterfallLiveBtn);
+
+        m_recordSpectrogramCheck = new QCheckBox(tr("Record continuously"), box);
+        m_recordSpectrogramCheck->setToolTip(
+            tr("Append every spectrogram row to a daily .rcsg file on disk\n"
+               "(…/spectrograms/<serial>/YYYY-MM-DD.rcsg).\n"
+               "Same day: append after restart. Past days: gzip → .rcsg.gz; old files pruned."));
+        lay->addWidget(m_recordSpectrogramCheck);
+
+        m_recordFolderBtn = new QPushButton(tr("Recording folder…"), box);
+        m_recordFolderBtn->setToolTip(
+            tr("Choose the base directory for continuous spectrogram files."));
+        lay->addWidget(m_recordFolderBtn);
+
+        m_recordKeepDaysCombo = new QComboBox(box);
+        m_recordKeepDaysCombo->addItem(tr("7 days"), 7);
+        m_recordKeepDaysCombo->addItem(tr("14 days"), 14);
+        m_recordKeepDaysCombo->addItem(tr("30 days"), 30);
+        m_recordKeepDaysCombo->addItem(tr("90 days"), 90);
+        m_recordKeepDaysCombo->addItem(tr("1 year"), 365);
+        m_recordKeepDaysCombo->setCurrentIndex(2); // 30
+        m_recordKeepDaysCombo->setToolTip(
+            tr("Delete spectrogram day files older than this (raw .rcsg and .rcsg.gz).\n"
+               "When a day rolls over, the closed file is gzip-compressed."));
+        auto *keepForm = new QFormLayout;
+        keepForm->setContentsMargins(0, 0, 0, 0);
+        keepForm->addRow(tr("Keep"), m_recordKeepDaysCombo);
+        lay->addLayout(keepForm);
+
+        m_recordStatusLabel = new QLabel(tr("Recording: off"), box);
+        m_recordStatusLabel->setWordWrap(true);
+        m_recordStatusLabel->setStyleSheet(QStringLiteral("color: #888; font-size: 11px;"));
+        lay->addWidget(m_recordStatusLabel);
+        specLay->addWidget(box);
+    }
+
+    specLay->addStretch(1);
+
+    auto *spectrumScroll = new QScrollArea(setupTabs);
+    spectrumScroll->setWidget(spectrumPage);
+    spectrumScroll->setWidgetResizable(true);
+    spectrumScroll->setFrameShape(QFrame::NoFrame);
+    spectrumScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setupTabs->addTab(spectrumScroll, tr("Spectrum"));
+
+    // --- ROI tab (controls only; chart is in the main tab bar) ---
+    m_roiPanel = new RoiTimeSeriesPanel(m_device, this);
+    auto *roiPage = new QWidget(setupTabs);
+    auto *roiLay = new QVBoxLayout(roiPage);
+    roiLay->setContentsMargins(0, 0, 0, 0);
+    roiLay->setSpacing(0);
+    if (QWidget *roiCtrl = m_roiPanel->controlsWidget()) {
+        roiCtrl->setMinimumWidth(240);
+        roiCtrl->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        roiLay->addWidget(roiCtrl, 1);
+    } else {
+        roiLay->addStretch(1);
+    }
+    setupTabs->addTab(roiPage, tr("ROI"));
+
+    setupLay->addWidget(setupTabs, 1);
+
+    m_setupPanel->setMinimumWidth(280);
+    m_setupPanel->setMaximumWidth(420);
+    m_setupPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
     // --- Main plots (dominant) ---
     auto *tabs = new QTabWidget(this);
@@ -382,12 +435,12 @@ MainWindow::MainWindow(QWidget *parent)
     m_spectrumSplit->setStretchFactor(1, 3);
     m_spectrumSplit->setSizes({180, 480});
     tabs->addTab(m_spectrumSplit, tr("Spectrum"));
-    // ROI tab: chart only (controls live in the setup panel).
+    // ROI chart tab (controls live in the setup ROI tab).
     tabs->addTab(m_roiPanel, tr("ROI time series"));
 
     m_mainSplitter = new QSplitter(Qt::Horizontal, this);
     m_mainSplitter->setChildrenCollapsible(true);
-    m_mainSplitter->addWidget(setupScroll);
+    m_mainSplitter->addWidget(m_setupPanel);
     m_mainSplitter->addWidget(tabs);
     m_mainSplitter->setStretchFactor(0, 0);
     m_mainSplitter->setStretchFactor(1, 1);
@@ -587,6 +640,24 @@ MainWindow::MainWindow(QWidget *parent)
         m_waterfall->setHistoryMinutes(minutes);
         QSettings().setValue(QStringLiteral("waterfall/historyMinutes"), minutes);
     });
+    connect(m_waterfallColorScaleSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int pct) {
+        if (!m_waterfall) {
+            return;
+        }
+        m_waterfall->setColorCeilFraction(float(pct) / 100.0f);
+        QSettings().setValue(QStringLiteral("waterfall/colorScalePercent"), pct);
+    });
+    connect(m_waterfall, &SpectrumWaterfall::colorScaleChanged, this,
+            [this](float /*floor*/, float ceilFrac) {
+        if (!m_waterfallColorScaleSpin) {
+            return;
+        }
+        const int pct = qBound(5, int(std::lround(double(ceilFrac) * 100.0)), 200);
+        const QSignalBlocker b(m_waterfallColorScaleSpin);
+        m_waterfallColorScaleSpin->setValue(pct);
+        QSettings().setValue(QStringLiteral("waterfall/colorScalePercent"), pct);
+    });
     connect(m_waterfallLiveBtn, &QPushButton::clicked, this, [this] {
         if (m_waterfall) {
             m_waterfall->followLive();
@@ -639,6 +710,12 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(m_acqStartBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStart);
     connect(m_acqStopBtn, &QPushButton::clicked, this, &MainWindow::onAcquisitionStop);
+    if (m_acqResumeLiveBtn) {
+        connect(m_acqResumeLiveBtn, &QPushButton::clicked, this, [this] {
+            clearAcquisitionSpectrumHold();
+            statusBar()->showMessage(tr("Live spectrum display resumed"), 3000);
+        });
+    }
     connect(m_acqModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &MainWindow::onAcquisitionModeChanged);
 
@@ -663,11 +740,31 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_acquisition, &AcquisitionController::stateChanged, this,
             [this](AcquisitionController::State) { updateAcquisitionUi(); });
     connect(m_acquisition, &AcquisitionController::completed, this, [this](const QString &summary) {
-        statusBar()->showMessage(tr("Acquisition %1").arg(summary), 15000);
+        // Freeze plot at the spectrum that met the target (m_lastSpectrum is that frame).
+        if (m_hasSpectrum) {
+            holdAcquisitionSpectrum(m_lastSpectrum, tr("target reached"));
+        }
+        statusBar()->showMessage(
+            tr("Acquisition %1 — spectrum plot frozen (device still counting). "
+               "Save spectrum… or Resume live.")
+                .arg(summary),
+            20000);
+        if (m_acqProgressLabel) {
+            m_acqProgressLabel->setText(
+                tr("Done — plot frozen. Save or Resume live.\n%1").arg(summary));
+        }
         updateAcquisitionUi();
     });
     connect(m_acquisition, &AcquisitionController::aborted, this,
-            [this](const QString &) { updateAcquisitionUi(); });
+            [this](const QString &reason) {
+        // Freeze only on intentional early stop — not disconnect/reset cleanup.
+        const bool keepSnapshot = reason.contains(QStringLiteral("stopped by user"),
+                                                  Qt::CaseInsensitive);
+        if (keepSnapshot && m_hasSpectrum) {
+            holdAcquisitionSpectrum(m_lastSpectrum, reason);
+        }
+        updateAcquisitionUi();
+    });
 
     connect(m_device, &QtRadiacode::RadiaCodeDevice::connected, this, &MainWindow::onConnected);
     connect(m_device, &QtRadiacode::RadiaCodeDevice::disconnected, this, &MainWindow::onDisconnected);
@@ -698,6 +795,16 @@ MainWindow::MainWindow(QWidget *parent)
         }
         const int histMin =
             settings.value(QStringLiteral("waterfall/historyMinutes"), 120).toInt();
+        if (m_waterfallColorScaleSpin) {
+            const int pct =
+                qBound(5, settings.value(QStringLiteral("waterfall/colorScalePercent"), 100).toInt(),
+                      200);
+            const QSignalBlocker blocker(m_waterfallColorScaleSpin);
+            m_waterfallColorScaleSpin->setValue(pct);
+            if (m_waterfall) {
+                m_waterfall->setColorCeilFraction(float(pct) / 100.0f);
+            }
+        }
         if (m_waterfallHistoryCombo) {
             const QSignalBlocker blocker(m_waterfallHistoryCombo);
             int idx = m_waterfallHistoryCombo->findData(histMin);
@@ -794,7 +901,7 @@ void MainWindow::updateSetupToggleUi()
         m_setupToggleBtn->setToolTip(tr("Hide setup panel"));
     } else {
         m_setupToggleBtn->setText(QStringLiteral("›"));
-        m_setupToggleBtn->setToolTip(tr("Show setup panel (device, live, ROI)"));
+        m_setupToggleBtn->setToolTip(tr("Show setup panel (Device / Spectrum / ROI)"));
     }
     if (m_toggleSetupAct) {
         const QSignalBlocker b(m_toggleSetupAct);
@@ -1267,6 +1374,9 @@ void MainWindow::onResetSpectrum()
     if (m_device->state() != QtRadiacode::RadiaCodeDevice::State::Connected) {
         return;
     }
+    // Reset ends any frozen acquisition snapshot and aborts a running run.
+    abortAcquisitionIfActive(tr("spectrum reset"));
+    clearAcquisitionSpectrumHold();
     appendLog(tr("Resetting spectrum on device…"));
     m_spectrum->clear();
     if (m_waterfall) {
@@ -1659,6 +1769,7 @@ void MainWindow::onConnected()
 void MainWindow::onDisconnected()
 {
     abortAcquisitionIfActive(tr("disconnected"));
+    clearAcquisitionSpectrumHold();
     m_pollTimer->stop();
     stopSlowStatusTimer();
     m_pollTick = 0;
@@ -1947,17 +2058,23 @@ QtRadiacode::RcSpectrum MainWindow::spectrumForView() const
         ? static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt())
         : SpectrumView::Live;
 
+    // After acquisition complete/stop: Live/Net show the frozen snapshot for Save.
+    const bool useHold = m_acqSpectrumHold && !m_acqHeldSpectrum.counts.isEmpty();
+    const QtRadiacode::RcSpectrum &liveSample =
+        useHold ? m_acqHeldSpectrum : m_lastSpectrum;
+    const bool hasLive = useHold || m_hasSpectrum;
+
     switch (view) {
     case SpectrumView::Background:
         return m_hasBackground ? m_backgroundSpectrum : QtRadiacode::RcSpectrum{};
     case SpectrumView::Net:
-        if (m_hasBackground && m_hasSpectrum) {
-            return computeNetSpectrum(m_lastSpectrum, m_backgroundSpectrum);
+        if (m_hasBackground && hasLive) {
+            return computeNetSpectrum(liveSample, m_backgroundSpectrum);
         }
-        return m_hasSpectrum ? m_lastSpectrum : QtRadiacode::RcSpectrum{};
+        return hasLive ? liveSample : QtRadiacode::RcSpectrum{};
     case SpectrumView::Live:
     default:
-        return m_hasSpectrum ? m_lastSpectrum : QtRadiacode::RcSpectrum{};
+        return hasLive ? liveSample : QtRadiacode::RcSpectrum{};
     }
 }
 
@@ -1992,16 +2109,30 @@ void MainWindow::refreshSelectionSpectrumDialog()
     m_selectionSpectrum.a1 = ex.a1;
     m_selectionSpectrum.a2 = ex.a2;
     m_selectionSpectrumPlot->setSpectrum(ex.counts, ex.a0, ex.a1, ex.a2);
-
+    // Full spectrum gray; selection energy window blue (same time integration).
+    m_selectionSpectrumPlot->setBaseBarColor(QColor(150, 152, 158, 190));
     const auto sel = m_waterfall->selection();
+    SpectrumRoiBand band;
+    band.chMin = sel.ch0;
+    band.chMax = sel.ch1;
+    band.color = QColor(70, 150, 255, 220);
+    band.enabled = true;
+    m_selectionSpectrumPlot->setRoiBands({band});
+
+    quint64 selCounts = 0;
+    for (int ch = sel.ch0; ch < sel.ch1 && ch < ex.counts.size(); ++ch) {
+        selCounts += ex.counts[ch];
+    }
     if (m_selectionSpectrumInfo) {
         m_selectionSpectrumInfo->setText(
-            tr("Integrated ΔN · ch %1–%2 · live %3 · total %4 counts "
+            tr("Integrated ΔN over selected time · full spectrum gray · ch %1–%2 blue · "
+               "live %3 · total %4 counts · selection %5 counts "
                "(updates when selection moves)")
                 .arg(sel.ch0)
                 .arg(sel.ch1 - 1)
                 .arg(formatDuration(ex.durationSec))
-                .arg(spectrumTotalCounts(m_selectionSpectrum)));
+                .arg(spectrumTotalCounts(m_selectionSpectrum))
+                .arg(selCounts));
     }
 }
 
@@ -2033,6 +2164,12 @@ void MainWindow::onExtractSelectionSpectrum()
     auto *info = new QLabel(dlg);
     info->setWordWrap(true);
     lay->addWidget(info);
+    auto *logY = new QCheckBox(tr("Logarithmic Y (log(y+1))"), dlg);
+    logY->setToolTip(
+        tr("Map counts with ln(1+y) so zero bins stay valid.\n"
+           "When off, the usual square-root count scale is used."));
+    connect(logY, &QCheckBox::toggled, plot, &SpectrumWidget::setLogYScale);
+    lay->addWidget(logY);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
     auto *exportBtn = buttons->addButton(tr("Export…"), QDialogButtonBox::ActionRole);
     connect(exportBtn, &QPushButton::clicked, this, [this] { onExportSelectionSpectrum(); });
@@ -2075,17 +2212,22 @@ void MainWindow::refreshSelectionMcsDialog()
     }
 
     const auto sel = m_waterfall->selection();
-    float a0 = m_lastSpectrum.a0;
-    float a1 = m_lastSpectrum.a1;
-    float a2 = m_lastSpectrum.a2;
-    if (!m_selectionSpectrum.counts.isEmpty()) {
-        a0 = m_selectionSpectrum.a0;
-        a1 = m_selectionSpectrum.a1;
-        a2 = m_selectionSpectrum.a2;
-    } else if (m_hasSpectrum) {
-        a0 = m_lastSpectrum.a0;
-        a1 = m_lastSpectrum.a1;
-        a2 = m_lastSpectrum.a2;
+    // Prefer calibration from the spectrogram session (.rcsg / last live spectrum
+    // pushed into the waterfall) — not m_lastSpectrum alone (empty after offline load).
+    float a0 = m_waterfall->calibA0();
+    float a1 = m_waterfall->calibA1();
+    float a2 = m_waterfall->calibA2();
+    if (!m_waterfall->hasEnergyCalibration()) {
+        if (!m_selectionSpectrum.counts.isEmpty()
+            && (qAbs(m_selectionSpectrum.a1) > 1e-12f || qAbs(m_selectionSpectrum.a2) > 1e-12f)) {
+            a0 = m_selectionSpectrum.a0;
+            a1 = m_selectionSpectrum.a1;
+            a2 = m_selectionSpectrum.a2;
+        } else if (m_hasSpectrum) {
+            a0 = m_lastSpectrum.a0;
+            a1 = m_lastSpectrum.a1;
+            a2 = m_lastSpectrum.a2;
+        }
     }
 
     RoiWindow roi;
@@ -2097,16 +2239,19 @@ void MainWindow::refreshSelectionMcsDialog()
 
     QVector<RoiTimeSample> samples;
     samples.reserve(pts.size());
+    // Monotonic X from row intervals (not wall-clock) so dense MCS never folds
+    // backward / collapses several rows onto one x pixel.
     const QDateTime t0 = pts.first().wallTime;
+    double elapsed = 0.0;
     for (const auto &p : pts) {
         RoiTimeSample s;
         s.hostTime = p.wallTime;
         s.liveSec = p.liveTimeSec;
-        s.elapsedFromT0 = (t0.isValid() && p.wallTime.isValid())
-                              ? t0.msecsTo(p.wallTime) / 1000.0
-                              : std::numeric_limits<double>::quiet_NaN();
-        s.grossCps = p.cps;
-        s.grossCounts = p.counts;
+        s.elapsedFromT0 = elapsed;
+        elapsed += (p.intervalSec > 0) ? double(p.intervalSec) : 1.0;
+        // gross = full spectrum (no energy window); ROI = selection ch range.
+        s.grossCps = p.fullCps;
+        s.grossCounts = p.fullCounts;
         RoiSample rs;
         rs.id = roi.id;
         rs.counts = p.counts;
@@ -2115,11 +2260,15 @@ void MainWindow::refreshSelectionMcsDialog()
         samples.append(s);
     }
 
-    m_mcsChart->setSamples(samples, t0.isValid(), t0, {roi});
+    // Match spectrum-from-selection palette: full = gray under, selection = blue on top.
+    QHash<QString, QColor> mcsColors;
+    mcsColors.insert(QStringLiteral("gross"), QColor(160, 162, 168, 230));
+    mcsColors.insert(QStringLiteral("selection"), QColor(70, 150, 255, 255));
+    m_mcsChart->setSamples(samples, true, t0, {roi}, mcsColors);
     if (m_mcsInfoLabel) {
         m_mcsInfoLabel->setText(
-            tr("ROI ch %1–%2 (%3–%4 keV) · %5 samples · rate sum in window "
-               "(updates when selection moves)")
+            tr("full (gray) = all channels · Selection (blue) ch %1–%2 (%3–%4 keV) · "
+               "%5 samples (same time window; updates when selection moves)")
                 .arg(sel.ch0)
                 .arg(sel.ch1 - 1)
                 .arg(roi.eMinKeV, 0, 'f', 1)
@@ -2156,6 +2305,12 @@ void MainWindow::onExtractSelectionMcs()
     auto *info = new QLabel(dlg);
     info->setWordWrap(true);
     lay->addWidget(info);
+    auto *logY = new QCheckBox(tr("Logarithmic Y (log(y+1))"), dlg);
+    logY->setToolTip(
+        tr("Map count rate with ln(1+y) so zero samples stay valid.\n"
+           "Useful when full and selection cps span a wide dynamic range."));
+    connect(logY, &QCheckBox::toggled, chart, &TimeSeriesWidget::setLogYScale);
+    lay->addWidget(logY);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
     auto *exportBtn = buttons->addButton(tr("Export CSV…"), QDialogButtonBox::ActionRole);
     connect(exportBtn, &QPushButton::clicked, this, [this] { onExportSelectionMcsCsv(); });
@@ -2262,10 +2417,11 @@ void MainWindow::onExportSelectionMcsCsv()
         return;
     }
     QTextStream ts(&f);
-    ts << "wall_time_iso,live_time_s,interval_s,roi_cps,roi_counts\n";
+    ts << "wall_time_iso,live_time_s,interval_s,full_cps,full_counts,roi_cps,roi_counts\n";
     for (const auto &p : pts) {
         ts << (p.wallTime.isValid() ? p.wallTime.toString(Qt::ISODate) : QString()) << ','
            << p.liveTimeSec << ',' << p.intervalSec << ','
+           << QString::number(p.fullCps, 'g', 8) << ',' << p.fullCounts << ','
            << QString::number(p.cps, 'g', 8) << ',' << p.counts << '\n';
     }
     statusBar()->showMessage(tr("Saved selection MCS: %1").arg(path), 5000);
@@ -2318,6 +2474,33 @@ void MainWindow::updateBackgroundUi()
     }
 }
 
+void MainWindow::holdAcquisitionSpectrum(const QtRadiacode::RcSpectrum &sp, const QString &reason)
+{
+    if (sp.counts.isEmpty()) {
+        return;
+    }
+    m_acqHeldSpectrum = sp;
+    m_acqSpectrumHold = true;
+    appendLog(tr("Acquisition: spectrum plot frozen (%1) — live time %2, %3 counts. "
+                 "Device keeps accumulating; use Resume live or Reset spectrum.")
+                  .arg(reason)
+                  .arg(formatDuration(sp.durationSec))
+                  .arg(spectrumTotalCounts(sp)));
+    refreshSpectrumDisplay();
+    updateAcquisitionUi();
+}
+
+void MainWindow::clearAcquisitionSpectrumHold()
+{
+    if (!m_acqSpectrumHold) {
+        return;
+    }
+    m_acqSpectrumHold = false;
+    m_acqHeldSpectrum = {};
+    refreshSpectrumDisplay();
+    updateAcquisitionUi();
+}
+
 void MainWindow::onAcquisitionStart()
 {
     if (!m_acquisition || !m_device) {
@@ -2330,6 +2513,9 @@ void MainWindow::onAcquisitionStart()
     if (m_acquisition->isActive()) {
         return;
     }
+
+    // New run always leaves any previous frozen snapshot.
+    clearAcquisitionSpectrumHold();
 
     const auto mode = static_cast<AcquisitionController::Mode>(
         m_acqModeCombo->currentData().toInt());
@@ -2399,7 +2585,17 @@ void MainWindow::onAcquisitionStart()
 
 void MainWindow::onAcquisitionStop()
 {
+    // abort() emits aborted → holdAcquisitionSpectrum freezes the plot.
     abortAcquisitionIfActive(tr("stopped by user"));
+    if (m_acqSpectrumHold && m_acqProgressLabel) {
+        m_acqProgressLabel->setText(
+            tr("Stopped — plot frozen. Save or Resume live."));
+    }
+    if (m_acqSpectrumHold) {
+        statusBar()->showMessage(
+            tr("Acquisition stopped — spectrum plot frozen (device still counting)"),
+            10000);
+    }
 }
 
 void MainWindow::onAcquisitionModeChanged()
@@ -2439,16 +2635,21 @@ void MainWindow::updateAcquisitionUi()
     if (m_acqStopBtn) {
         m_acqStopBtn->setEnabled(active);
     }
+    if (m_acqResumeLiveBtn) {
+        m_acqResumeLiveBtn->setEnabled(!active && m_acqSpectrumHold);
+    }
     if (m_acqModeCombo) {
         m_acqModeCombo->setEnabled(connected && !active);
     }
     if (m_acqTargetSpin) {
         m_acqTargetSpin->setEnabled(connected && !active);
     }
-    if (!active) {
+    if (!active && !m_acqSpectrumHold) {
         if (m_acqProgressLabel
             && (m_acqProgressLabel->text().isEmpty()
-                || m_acqProgressLabel->text() == QLatin1String("—"))) {
+                || m_acqProgressLabel->text() == QLatin1String("—")
+                || m_acqProgressLabel->text().startsWith(tr("Done"))
+                || m_acqProgressLabel->text().startsWith(tr("Stopped")))) {
             m_acqProgressLabel->setText(tr("—"));
         }
         // Keep final 100% after complete; only clear bar when fully idle with no text.
@@ -2463,12 +2664,14 @@ void MainWindow::abortAcquisitionIfActive(const QString &reason)
 {
     if (m_acquisition && m_acquisition->isActive()) {
         m_acquisition->abort(reason);
-    }
-    if (m_acqProgressBar) {
-        m_acqProgressBar->setValue(0);
-    }
-    if (m_acqProgressLabel) {
-        m_acqProgressLabel->setText(tr("—"));
+    } else if (!m_acqSpectrumHold) {
+        // Idle abort (e.g. disconnect): clear progress chrome only.
+        if (m_acqProgressBar) {
+            m_acqProgressBar->setValue(0);
+        }
+        if (m_acqProgressLabel) {
+            m_acqProgressLabel->setText(tr("—"));
+        }
     }
     updateAcquisitionUi();
 }

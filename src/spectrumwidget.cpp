@@ -65,9 +65,58 @@ void SpectrumWidget::setRoiBands(const QVector<SpectrumRoiBand> &bands)
     update();
 }
 
+void SpectrumWidget::setBaseBarColor(const QColor &color)
+{
+    m_baseBarColor = color.isValid() ? color : QColor(70, 150, 255, 210);
+    // Slight lift for cursor/highlight on the same hue.
+    m_baseBarColorHi = QColor(std::min(255, m_baseBarColor.red() + 40),
+                              std::min(255, m_baseBarColor.green() + 40),
+                              std::min(255, m_baseBarColor.blue() + 40),
+                              std::min(255, m_baseBarColor.alpha() + 20));
+    update();
+}
+
+void SpectrumWidget::setLogYScale(bool on)
+{
+    if (m_logY == on) {
+        return;
+    }
+    m_logY = on;
+    update();
+}
+
+double SpectrumWidget::yNorm(double counts, double maxC) const
+{
+    if (!(maxC > 0.0) || !(counts >= 0.0) || !std::isfinite(counts)) {
+        return 0.0;
+    }
+    if (m_logY) {
+        // log1p = ln(1+x): zeros map to 0, no clamp tricks.
+        const double den = std::log1p(maxC);
+        if (!(den > 0.0)) {
+            return 0.0;
+        }
+        return std::clamp(std::log1p(counts) / den, 0.0, 1.0);
+    }
+    return std::clamp(std::sqrt(counts / maxC), 0.0, 1.0);
+}
+
+double SpectrumWidget::yDenorm(double u, double maxC) const
+{
+    const double t = std::clamp(u, 0.0, 1.0);
+    if (!(maxC > 0.0)) {
+        return 0.0;
+    }
+    if (m_logY) {
+        return std::expm1(t * std::log1p(maxC));
+    }
+    return t * t * maxC;
+}
+
 void SpectrumWidget::clear()
 {
     m_counts.clear();
+    m_roiBands.clear();
     m_xMin = 0;
     m_xMax = 1;
     m_linkedCh = -1;
@@ -284,15 +333,15 @@ void SpectrumWidget::drawGridAndAxes(QPainter &p, const QRect &plot, quint32 max
         p.drawText(x - tw / 2, plot.bottom() + fm.ascent() + 4, label);
     }
 
-    // Horizontal grid + Y labels (sqrt scale → show actual count levels)
+    // Horizontal grid + Y labels (√ or log1p space → show actual count levels)
     const int yTicks = 4;
     const QFontMetrics fmY = p.fontMetrics();
     for (int t = 0; t <= yTicks; ++t) {
-        const double u = static_cast<double>(t) / yTicks; // 0..1 in sqrt space
+        const double u = static_cast<double>(t) / yTicks; // 0..1 in transform space
         const int y = plot.bottom() - static_cast<int>(u * (plot.height() - 1));
         p.setPen(QColor(45, 48, 54));
         p.drawLine(plot.left(), y, plot.right(), y);
-        const double countVal = u * u * static_cast<double>(maxC);
+        const double countVal = yDenorm(u, static_cast<double>(maxC));
         p.setPen(QColor(170, 172, 180));
         const QString label = (countVal >= 1000.0)
             ? QString::number(countVal / 1000.0, 'f', 1) + QStringLiteral("k")
@@ -310,7 +359,7 @@ void SpectrumWidget::drawGridAndAxes(QPainter &p, const QRect &plot, quint32 max
     p.drawText(plot.center().x() - xTitleW / 2, height() - 6, xTitle);
 
     // Rotated Y title on the far left edge.
-    const QString yTitle = tr("Counts (√ scale)");
+    const QString yTitle = m_logY ? tr("Counts (log₁ₚ y+1)") : tr("Counts (√ scale)");
     p.save();
     p.translate(12, plot.center().y() + fmTitle.horizontalAdvance(yTitle) / 2);
     p.rotate(-90);
@@ -320,24 +369,36 @@ void SpectrumWidget::drawGridAndAxes(QPainter &p, const QRect &plot, quint32 max
 
 QColor SpectrumWidget::barColorForChannel(int channel, bool highlight) const
 {
-    const QColor base(70, 150, 255, 210);
-    const QColor baseHi(110, 190, 255, 230);
+    const QColor base = m_baseBarColor;
+    const QColor baseHi = m_baseBarColorHi;
 
-    if (m_roiBands.isEmpty() || !hasEnergyAxis()) {
+    if (m_roiBands.isEmpty()) {
         return highlight ? baseHi : base;
     }
 
-    // Channel energy at center of bin for ROI membership.
+    // Channel energy at center of bin for energy-based ROI membership.
     const double e = channelToEnergy(static_cast<double>(channel) + 0.5);
+    const bool energyOk = hasEnergyAxis();
     int rSum = 0;
     int gSum = 0;
     int bSum = 0;
     int nHit = 0;
     for (const SpectrumRoiBand &band : m_roiBands) {
-        if (!band.enabled || band.eMaxKeV <= band.eMinKeV) {
+        if (!band.enabled) {
             continue;
         }
-        if (e >= band.eMinKeV && e < band.eMaxKeV) {
+        bool inBand = false;
+        if (band.chMin >= 0) {
+            // Channel window [chMin, chMax) — used by selection spectrum highlight.
+            if (band.chMax > band.chMin && channel >= band.chMin && channel < band.chMax) {
+                inBand = true;
+            }
+        } else if (energyOk && band.eMaxKeV > band.eMinKeV) {
+            if (e >= band.eMinKeV && e < band.eMaxKeV) {
+                inBand = true;
+            }
+        }
+        if (inBand) {
             rSum += band.color.red();
             gSum += band.color.green();
             bSum += band.color.blue();
@@ -375,7 +436,7 @@ void SpectrumWidget::drawSpectrum(QPainter &p, const QRect &plot, quint32 maxC) 
         const int left = static_cast<int>(std::floor(x0));
         const int right = static_cast<int>(std::ceil(x1));
         const int w = std::max(1, right - left);
-        const double t = qSqrt(static_cast<double>(m_counts[i]) / static_cast<double>(maxC));
+        const double t = yNorm(static_cast<double>(m_counts[i]), static_cast<double>(maxC));
         const int h = static_cast<int>(t * (plot.height() - 1));
         if (h <= 0) {
             continue;

@@ -14,7 +14,8 @@ class SpectrogramRecorder;
 // set in minutes (default 2 h) and grows with integrate coarseness.
 // Display: 1:1 time (one row = one pixel), bottom-aligned; wheel scrolls
 // through history. scrollFromNewest==0 follows live data.
-// Colour map = [0, max over full history]; recolour when max moves (~2%).
+// Colour map = [floor, ceil] within auto max over history; recolour when max moves (~2%).
+// Right-hand SDR-style colour bar: drag / wheel to scale the mapped range (highlight weak rates).
 // Net view adjusts live rates by BG rate at paint time (no full snap history).
 class SpectrumWaterfall : public QWidget {
     Q_OBJECT
@@ -27,6 +28,11 @@ public:
     /// Visible channel range [xMin, xMax) — typically mirrored from SpectrumWidget zoom.
     void setViewRange(double xMin, double xMax);
     void setCalibration(float a0, float a1, float a2);
+    /// Energy calibration currently used for cursors / extract / captions (from device or .rcsg).
+    float calibA0() const { return m_a0; }
+    float calibA1() const { return m_a1; }
+    float calibA2() const { return m_a2; }
+    bool hasEnergyCalibration() const;
 
     /// Push a live cumulative spectrum snapshot (device accumulation).
     void pushSpectrum(const QVector<quint32> &counts, quint32 durationSec);
@@ -57,6 +63,17 @@ public:
     /// Jump viewport to the oldest data still in the history buffer.
     void goToOldest();
 
+    /// Colour scale: map rates in [floor, ceil] × autoMax onto the palette (SDR-style).
+    /// ceilFraction 0.02…2.0 (1.0 = full auto max; lower = more sensitive / “gain”).
+    /// floorFraction 0…0.5 (cut noise floor).
+    void setColorCeilFraction(float frac);
+    float colorCeilFraction() const { return m_colorCeilFrac; }
+    void setColorFloorFraction(float frac);
+    float colorFloorFraction() const { return m_colorFloorFrac; }
+    void resetColorScale();
+    /// Auto matrix max used as the reference for floor/ceil (cps).
+    float autoDisplayMax() const { return m_displayMax; }
+
     /// Device serial (and optional label) for PNG export metadata.
     void setDeviceSerial(const QString &serial);
     QString deviceSerial() const { return m_deviceSerial; }
@@ -86,7 +103,8 @@ public:
     Selection selection() const { return m_selection; }
     void clearSelection();
 
-    /// Integrated counts per channel over the selection (ΔN sum); zeros outside ch window.
+    /// Integrated ΔN per channel over the selected time rows (all channels; same live window).
+    /// Energy highlight for the selection ch window is applied by the dialog (blue vs gray).
     struct SelectionSpectrum {
         QVector<quint32> counts;
         quint32 durationSec = 0; // sum of intervalSec over selected rows
@@ -94,13 +112,15 @@ public:
         float a1 = 0;
         float a2 = 0;
     };
-    /// One MCS sample: ROI rate (sum of rates in ch window) at a history row.
+    /// One MCS sample at a history row (same time window for full + selection).
     struct SelectionMcsPoint {
         QDateTime wallTime;
         quint32 liveTimeSec = 0;
         quint32 intervalSec = 0;
-        double cps = 0;
-        quint64 counts = 0; // sum of ΔN in ch window
+        double fullCps = 0;      // all channels (no energy window)
+        quint64 fullCounts = 0;  // sum of ΔN over all channels
+        double cps = 0;          // selection energy window only
+        quint64 counts = 0;      // sum of ΔN in ch window
     };
 
     SelectionSpectrum extractSelectionSpectrum() const;
@@ -117,6 +137,8 @@ signals:
                            quint32 liveTimeSec, int ageFromNewestSec);
     void followLiveChanged(bool following);
     void scrollChanged(int scrollFromNewest, int maxScroll);
+    /// Colour scale floor/ceil fractions changed (UI sync).
+    void colorScaleChanged(float floorFrac, float ceilFrac);
     /// Emitted when the analysis rectangle is set, cleared, or adjusted after history trim.
     void selectionChanged(bool hasSelection, int ch0, int ch1, int row0, int row1);
     void extractSpectrumRequested();
@@ -166,6 +188,11 @@ private:
     float bgRate(int ch) const;
     float displayRate(float liveRate, int ch) const;
     QRgb rateToColor(float rate) const;
+    float colorMapMin() const;
+    float colorMapMax() const;
+    QRect colorBarRect() const;
+    void drawColorBar(QPainter &p, const QRect &plot) const;
+    void applyColorScaleFromBarY(int y, bool floorHandle);
     void recomputeCapacity();
     void clampScroll();
     int maxScroll() const;
@@ -203,9 +230,14 @@ private:
                           PngExportScope scope) const;
 
     static constexpr int kMarginLeft = 64;
-    static constexpr int kMarginRight = 14;
+    static constexpr int kMarginRight = 28; // room for SDR-style colour bar
     static constexpr int kMarginTop = 4;
     static constexpr int kMarginBottom = 22;
+    static constexpr int kColorBarWidth = 14;
+    static constexpr int kColorBarGap = 4;
+    static constexpr float kColorCeilMin = 0.02f;
+    static constexpr float kColorCeilMax = 2.0f;
+    static constexpr float kColorFloorMax = 0.5f;
     static constexpr int kMinHistoryMinutes = 15;
     static constexpr int kMaxHistoryMinutes = 8 * 60;
     static constexpr int kDefaultHistoryMinutes = 120; // 2 h
@@ -241,7 +273,11 @@ private:
     float m_a1 = 0;
     float m_a2 = 0;
 
-    float m_displayMax = 1.0f;
+    float m_displayMax = 1.0f; // auto max over history (reference)
+    float m_colorCeilFrac = 1.0f;  // colour map top = displayMax * ceil
+    float m_colorFloorFrac = 0.0f; // colour map bottom
+    bool m_colorBarDragging = false;
+    bool m_colorBarDragFloor = false; // false = drag ceil (top); true = floor (bottom)
     /// Viewport-sized colour cache (not the full multi-hour buffer).
     QImage m_image;
     int m_viewportFirstRow = -1; // first history row currently baked into m_image

@@ -7,7 +7,6 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
@@ -29,7 +28,7 @@ public:
     void onSpectrum(const QtRadiacode::RcSpectrum &sp);
     int dwellSeconds() const;
 
-    /// Preset / table / record controls — place next to Live (not inside the chart tab).
+    /// Preset / table / record controls — placed in the setup ROI tab (chart stays in main tabs).
     QWidget *controlsWidget() const { return m_controlsBox; }
 
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -78,7 +77,7 @@ private:
     QtRadiacode::RadiaCodeDevice *m_device = nullptr;
     RoiTimeSeriesRecorder *m_recorder = nullptr;
     TimeSeriesWidget *m_chart = nullptr;
-    QGroupBox *m_controlsBox = nullptr;
+    QWidget *m_controlsBox = nullptr;
 
     QComboBox *m_presetCombo = nullptr;
     QTableWidget *m_roiTable = nullptr;

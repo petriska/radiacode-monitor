@@ -3,7 +3,7 @@
 #include "roitimeseries/roimath.h"
 
 #include <QPainter>
-#include <QPainterPath>
+#include <QPolygonF>
 
 #include <algorithm>
 #include <cmath>
@@ -26,8 +26,33 @@ void TimeSeriesWidget::clear()
     update();
 }
 
+void TimeSeriesWidget::setLogYScale(bool on)
+{
+    if (m_logY == on) {
+        return;
+    }
+    m_logY = on;
+    update();
+}
+
+double TimeSeriesWidget::yNorm(double y) const
+{
+    if (!(y >= 0.0) || !std::isfinite(y) || !(m_yMax > 0.0)) {
+        return 0.0;
+    }
+    if (m_logY) {
+        const double den = std::log1p(m_yMax);
+        if (!(den > 0.0)) {
+            return 0.0;
+        }
+        return std::clamp(std::log1p(y) / den, 0.0, 1.0);
+    }
+    return std::clamp(y / m_yMax, 0.0, 1.0);
+}
+
 void TimeSeriesWidget::setSamples(const QVector<RoiTimeSample> &samples, bool hasT0,
-                                  const QDateTime &t0, const QVector<RoiWindow> &roiOrder)
+                                  const QDateTime &t0, const QVector<RoiWindow> &roiOrder,
+                                  const QHash<QString, QColor> &colorOverrides)
 {
     Q_UNUSED(t0);
     m_series.clear();
@@ -53,6 +78,9 @@ void TimeSeriesWidget::setSamples(const QVector<RoiTimeSample> &samples, bool ha
     ids.prepend(QStringLiteral("gross"));
 
     auto colorForId = [&](const QString &id) -> QColor {
+        if (colorOverrides.contains(id) && colorOverrides.value(id).isValid()) {
+            return colorOverrides.value(id);
+        }
         if (id == QStringLiteral("gross")) {
             return roiSeriesColor(0);
         }
@@ -67,7 +95,13 @@ void TimeSeriesWidget::setSamples(const QVector<RoiTimeSample> &samples, bool ha
     for (const QString &id : ids) {
         Series ser;
         ser.id = id;
-        ser.label = (id == QStringLiteral("gross")) ? QStringLiteral("gross") : id;
+        ser.label = (id == QStringLiteral("gross")) ? QStringLiteral("full") : id;
+        for (int i = 0; i < roiOrder.size(); ++i) {
+            if (roiOrder[i].id == id && !roiOrder[i].name.isEmpty()) {
+                ser.label = roiOrder[i].name;
+                break;
+            }
+        }
         ser.color = colorForId(id);
         m_series.append(ser);
     }
@@ -111,10 +145,12 @@ void TimeSeriesWidget::setSamples(const QVector<RoiTimeSample> &samples, bool ha
                     }
                 }
             }
-            if (std::isfinite(y)) {
-                ser.points.append(QPointF(x, y));
-                yMax = std::max(yMax, y);
+            // Keep every sample so series stay time-aligned (NaN -> 0).
+            if (!std::isfinite(y) || y < 0.0) {
+                y = 0.0;
             }
+            ser.points.append(QPointF(x, y));
+            yMax = std::max(yMax, y);
         }
     }
 
@@ -151,7 +187,7 @@ void TimeSeriesWidget::paintEvent(QPaintEvent *)
 
     if (m_series.isEmpty() || m_series.first().points.isEmpty()) {
         p.setPen(QColor(160, 160, 160));
-        p.drawText(rect(), Qt::AlignCenter, tr("No samples yet — start recording"));
+        p.drawText(rect(), Qt::AlignCenter, tr("No samples yet - start recording"));
         return;
     }
 
@@ -160,14 +196,24 @@ void TimeSeriesWidget::paintEvent(QPaintEvent *)
         return plot.left() + (x - m_xMin) / xSpan * plot.width();
     };
     auto toY = [&](double y) {
-        const double t = std::clamp(y / m_yMax, 0.0, 1.0);
+        const double t = yNorm(y);
         return plot.bottom() - t * (plot.height() - 1);
     };
 
     p.setPen(QColor(45, 48, 54));
     for (int i = 0; i <= 4; ++i) {
+        const double u = 1.0 - double(i) / 4.0; // top = 1, bottom = 0
         const int y = plot.top() + i * plot.height() / 4;
         p.drawLine(plot.left(), y, plot.right(), y);
+        p.setPen(QColor(170, 172, 180));
+        double val = 0.0;
+        if (m_logY) {
+            val = std::expm1(u * std::log1p(m_yMax));
+        } else {
+            val = u * m_yMax;
+        }
+        p.drawText(4, y + 4, QString::number(val, 'g', 3));
+        p.setPen(QColor(45, 48, 54));
     }
 
     if (m_useElapsed && m_hasT0 && m_t0Elapsed >= m_xMin && m_t0Elapsed <= m_xMax) {
@@ -175,39 +221,38 @@ void TimeSeriesWidget::paintEvent(QPaintEvent *)
         p.setPen(QPen(QColor(255, 100, 100, 200), 1, Qt::DashLine));
         p.drawLine(x0, plot.top(), x0, plot.bottom());
         p.setPen(QColor(255, 140, 140));
-        p.drawText(x0 + 4, plot.top() + 14, tr("t₀"));
+        p.drawText(x0 + 4, plot.top() + 14, tr("t0"));
     }
 
     p.setRenderHint(QPainter::Antialiasing, true);
+    p.setClipRect(plot.adjusted(1, 1, -1, -1));
     for (const Series &ser : m_series) {
-        if (ser.points.size() < 2) {
-            if (ser.points.size() == 1) {
-                p.setPen(QPen(ser.color, 2));
-                const QPointF &pt = ser.points.first();
-                p.drawEllipse(QPointF(toX(pt.x()), toY(pt.y())), 3, 3);
-            }
+        if (ser.points.isEmpty()) {
             continue;
         }
-        p.setPen(QPen(ser.color, 1.5));
-        QPainterPath path;
-        bool started = false;
-        for (const QPointF &pt : ser.points) {
-            const QPointF q(toX(pt.x()), toY(pt.y()));
-            if (!started) {
-                path.moveTo(q);
-                started = true;
-            } else {
-                path.lineTo(q);
-            }
+        if (ser.points.size() == 1) {
+            p.setPen(QPen(ser.color, 2));
+            const QPointF &pt = ser.points.first();
+            p.drawEllipse(QPointF(toX(pt.x()), toY(pt.y())), 3, 3);
+            continue;
         }
-        p.drawPath(path);
+        QPolygonF poly;
+        poly.reserve(ser.points.size());
+        for (const QPointF &pt : ser.points) {
+            poly.append(QPointF(toX(pt.x()), toY(pt.y())));
+        }
+        const bool isGross = (ser.id == QStringLiteral("gross"));
+        const qreal penW = isGross ? 1.4 : 1.8;
+        p.setPen(QPen(ser.color, penW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawPolyline(poly);
     }
+    p.setClipping(false);
 
     p.setRenderHint(QPainter::Antialiasing, false);
-    p.setPen(QColor(170, 172, 180));
-    p.drawText(4, plot.top() + 12, QString::number(m_yMax, 'g', 3));
-    p.drawText(4, plot.bottom(), QStringLiteral("0"));
-    const QString xLabel = m_useElapsed ? tr("elapsed from t₀ (s)") : tr("sample #");
+    p.setPen(QColor(130, 132, 140));
+    const QString yHint = m_logY ? tr("cps (log1p)") : tr("cps");
+    p.drawText(4, height() - 20, yHint);
+    const QString xLabel = m_useElapsed ? tr("elapsed from t0 (s)") : tr("sample #");
     p.drawText(plot.center().x() - 50, height() - 6, xLabel);
     p.drawText(plot.left(), height() - 6, QString::number(m_xMin, 'f', 0));
     p.drawText(plot.right() - 40, height() - 6, QString::number(m_xMax, 'f', 0));
