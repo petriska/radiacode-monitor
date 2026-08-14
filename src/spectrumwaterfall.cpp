@@ -37,7 +37,7 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
     setToolTip(tr(
         "Spectrogram / waterfall: count rate per channel over time (ΔN / Δt).\n"
         "Drag left button: select a rectangle (energy × time) for analysis.\n"
-        "Drag inside selection: move the box without resizing.\n"
+        "Drag inside selection: move the box · drag edges/corners: resize.\n"
         "Esc / click outside / right-click → Clear selection.\n"
         "Mouse wheel: scroll history · Double-click: jump to live.\n"
         "Right-click menu: Follow live, Go to oldest, PNG, Save/Load history.\n"
@@ -175,7 +175,9 @@ void SpectrumWaterfall::clear()
     m_linkedCh = -1;
     m_selectDragging = false;
     m_selectMoving = false;
+    m_selectResizing = false;
     m_selectDragMoved = false;
+    m_resizeEdges = 0;
     clearSelection();
     clearCursor();
     if (!wasFollow) {
@@ -187,13 +189,15 @@ void SpectrumWaterfall::clear()
 
 void SpectrumWaterfall::clearSelection()
 {
-    if (!m_selection.valid && !m_selectDragging && !m_selectMoving) {
+    if (!m_selection.valid && !m_selectDragging && !m_selectMoving && !m_selectResizing) {
         return;
     }
     m_selection = Selection{};
     m_selectDragging = false;
     m_selectMoving = false;
+    m_selectResizing = false;
     m_selectDragMoved = false;
+    m_resizeEdges = 0;
     unsetCursor();
     emitSelectionChanged();
     update();
@@ -370,6 +374,130 @@ void SpectrumWaterfall::moveSelectionBy(int dCh, int dRow, bool notify)
     m_selection.row0 = row0;
     m_selection.row1 = row0 + h;
     m_selection.valid = true;
+    if (notify) {
+        emitSelectionChanged();
+    }
+}
+
+int SpectrumWaterfall::hitTestSelectionEdge(const QPoint &pos) const
+{
+    if (!m_selection.valid) {
+        return 0;
+    }
+    TimeView tv;
+    if (!timeView(plotRect(), &tv)) {
+        return 0;
+    }
+    const QRect r = selectionPixelRect(tv);
+    if (r.isEmpty()) {
+        return 0;
+    }
+
+    const int k = kSelectEdgeHitPx;
+    const QRect outer = r.adjusted(-k, -k, k, k);
+    if (!outer.contains(pos)) {
+        return 0;
+    }
+
+    int edges = 0;
+    if (pos.x() <= r.left() + k) {
+        edges |= kEdgeLeft;
+    }
+    if (pos.x() >= r.right() - k) {
+        edges |= kEdgeRight;
+    }
+    if (pos.y() <= r.top() + k) {
+        edges |= kEdgeTop;
+    }
+    if (pos.y() >= r.bottom() - k) {
+        edges |= kEdgeBottom;
+    }
+
+    // Only count an edge if the point is roughly along that side (not far outside opposite).
+    if (pos.y() < r.top() - k || pos.y() > r.bottom() + k) {
+        edges &= ~(kEdgeLeft | kEdgeRight);
+        // keep top/bottom if in vertical band of outer
+    }
+    if (pos.x() < r.left() - k || pos.x() > r.right() + k) {
+        edges &= ~(kEdgeTop | kEdgeBottom);
+    }
+
+    // Interior (not near any edge) → 0 (caller treats as move).
+    const QRect inner = r.adjusted(k, k, -k, -k);
+    if (inner.isValid() && inner.contains(pos)) {
+        return 0;
+    }
+    return edges;
+}
+
+void SpectrumWaterfall::applySelectionHoverCursor(const QPoint &pos)
+{
+    if (!m_selection.valid) {
+        if (cursor().shape() != Qt::ArrowCursor && cursor().shape() != Qt::CrossCursor) {
+            unsetCursor();
+        }
+        return;
+    }
+    const int edges = hitTestSelectionEdge(pos);
+    if (edges != 0) {
+        const bool hor = (edges & (kEdgeLeft | kEdgeRight)) != 0;
+        const bool ver = (edges & (kEdgeTop | kEdgeBottom)) != 0;
+        if (hor && ver) {
+            // Diagonal: TL-BR vs TR-BL
+            const bool tlbr = ((edges & kEdgeLeft) && (edges & kEdgeTop))
+                || ((edges & kEdgeRight) && (edges & kEdgeBottom));
+            setCursor(tlbr ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor);
+        } else if (hor) {
+            setCursor(Qt::SizeHorCursor);
+        } else {
+            setCursor(Qt::SizeVerCursor);
+        }
+        return;
+    }
+    if (selectionContainsWidgetPos(pos)) {
+        setCursor(Qt::SizeAllCursor);
+    } else {
+        unsetCursor();
+    }
+}
+
+void SpectrumWaterfall::resizeSelectionEdge(int edges, const QPoint &pos, bool notify)
+{
+    if (!m_moveOrig.valid || edges == 0 || m_channels <= 0 || m_rows.isEmpty()) {
+        return;
+    }
+    const QRect plot = plotRect();
+    TimeView tv;
+    if (!timeView(plot, &tv)) {
+        return;
+    }
+
+    auto clampPos = [&](QPoint p) {
+        p.setX(qBound(tv.dest.left(), p.x(), tv.dest.right()));
+        p.setY(qBound(tv.dest.top(), p.y(), tv.dest.bottom()));
+        return p;
+    };
+    const QPoint p = clampPos(pos);
+    int ch = int(std::floor(channelAtPlotX(p.x(), plot)));
+    ch = std::clamp(ch, 0, m_channels - 1);
+    const int row = rowFromWidgetY(p.y(), tv);
+
+    Selection s = m_moveOrig;
+    if (edges & kEdgeLeft) {
+        s.ch0 = qBound(0, ch, s.ch1 - 1);
+    }
+    if (edges & kEdgeRight) {
+        // exclusive end: channel under cursor becomes last included → ch1 = ch+1
+        s.ch1 = qBound(s.ch0 + 1, ch + 1, m_channels);
+    }
+    if (edges & kEdgeTop) {
+        s.row0 = qBound(0, row, s.row1);
+    }
+    if (edges & kEdgeBottom) {
+        s.row1 = qBound(s.row0, row, m_rows.size() - 1);
+    }
+    s.valid = (s.ch1 > s.ch0) && (s.row1 >= s.row0);
+    m_selection = s;
     if (notify) {
         emitSelectionChanged();
     }
@@ -878,28 +1006,43 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
         m_selectDragMoved = false;
         m_selectPressPos = event->pos();
         m_selectCurrPos = event->pos();
+        m_selectMoving = false;
+        m_selectResizing = false;
+        m_selectDragging = false;
+        m_resizeEdges = 0;
         setFocus(Qt::MouseFocusReason);
 
-        // Click inside existing selection → move mode (fixed size).
-        if (m_selection.valid && selectionContainsWidgetPos(event->pos())) {
-            m_selectMoving = true;
-            m_selectDragging = false;
-            m_moveOrig = m_selection;
-            const QRect plot = plotRect();
-            TimeView tv;
-            timeView(plot, &tv);
-            m_movePressCh =
-                std::clamp(int(std::floor(channelAtPlotX(event->pos().x(), plot))), 0,
-                           m_channels - 1);
-            m_movePressRow = rowFromWidgetY(event->pos().y(), tv);
-            setCursor(Qt::SizeAllCursor);
-            grabMouse();
-            event->accept();
-            return;
+        // Edge/corner of existing selection → resize that side(s).
+        if (m_selection.valid) {
+            const int edges = hitTestSelectionEdge(event->pos());
+            if (edges != 0) {
+                m_selectResizing = true;
+                m_resizeEdges = edges;
+                m_moveOrig = m_selection;
+                applySelectionHoverCursor(event->pos());
+                grabMouse();
+                event->accept();
+                return;
+            }
+            // Interior → move mode (fixed size).
+            if (selectionContainsWidgetPos(event->pos())) {
+                m_selectMoving = true;
+                m_moveOrig = m_selection;
+                const QRect plot = plotRect();
+                TimeView tv;
+                timeView(plot, &tv);
+                m_movePressCh =
+                    std::clamp(int(std::floor(channelAtPlotX(event->pos().x(), plot))), 0,
+                               m_channels - 1);
+                m_movePressRow = rowFromWidgetY(event->pos().y(), tv);
+                setCursor(Qt::SizeAllCursor);
+                grabMouse();
+                event->accept();
+                return;
+            }
         }
 
         // Otherwise create a new rectangle.
-        m_selectMoving = false;
         m_selectDragging = true;
         grabMouse();
         event->accept();
@@ -910,6 +1053,18 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
 
 void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_selectResizing) {
+        m_selectCurrPos = event->pos();
+        if ((event->pos() - m_selectPressPos).manhattanLength() >= kSelectDragThresholdPx
+            || m_selectDragMoved) {
+            m_selectDragMoved = true;
+            resizeSelectionEdge(m_resizeEdges, event->pos(), false);
+            repaint();
+        }
+        event->accept();
+        return;
+    }
+
     if (m_selectMoving) {
         m_selectCurrPos = event->pos();
         const QRect plot = plotRect();
@@ -945,22 +1100,32 @@ void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    // Hover affordance: open-hand when over selection.
-    if (m_selection.valid && selectionContainsWidgetPos(event->pos())) {
-        setCursor(Qt::SizeAllCursor);
-    } else if (cursor().shape() == Qt::SizeAllCursor) {
-        unsetCursor();
-    }
+    applySelectionHoverCursor(event->pos());
     setCursorFromPos(event->pos());
     event->accept();
 }
 
 void SpectrumWaterfall::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton && (m_selectDragging || m_selectMoving)) {
+    if (event->button() == Qt::LeftButton
+        && (m_selectDragging || m_selectMoving || m_selectResizing)) {
         if (mouseGrabber() == this) {
             releaseMouse();
         }
+
+        if (m_selectResizing) {
+            m_selectResizing = false;
+            if (m_selectDragMoved) {
+                resizeSelectionEdge(m_resizeEdges, event->pos(), true);
+            }
+            m_resizeEdges = 0;
+            m_selectDragMoved = false;
+            applySelectionHoverCursor(event->pos());
+            update();
+            event->accept();
+            return;
+        }
+
         if (m_selectMoving) {
             m_selectMoving = false;
             if (m_selectDragMoved) {
@@ -978,11 +1143,7 @@ void SpectrumWaterfall::mouseReleaseEvent(QMouseEvent *event)
             }
             // Click inside without move: keep selection.
             m_selectDragMoved = false;
-            if (m_selection.valid && selectionContainsWidgetPos(event->pos())) {
-                setCursor(Qt::SizeAllCursor);
-            } else {
-                unsetCursor();
-            }
+            applySelectionHoverCursor(event->pos());
             update();
             event->accept();
             return;
@@ -1005,11 +1166,9 @@ void SpectrumWaterfall::mouseReleaseEvent(QMouseEvent *event)
 
 void SpectrumWaterfall::leaveEvent(QEvent *event)
 {
-    if (!m_selectDragging && !m_selectMoving) {
+    if (!m_selectDragging && !m_selectMoving && !m_selectResizing) {
         clearCursor();
-        if (cursor().shape() == Qt::SizeAllCursor) {
-            unsetCursor();
-        }
+        unsetCursor();
     }
     QWidget::leaveEvent(event);
 }
@@ -1022,7 +1181,9 @@ void SpectrumWaterfall::mouseDoubleClickEvent(QMouseEvent *event)
         }
         m_selectDragging = false;
         m_selectMoving = false;
+        m_selectResizing = false;
         m_selectDragMoved = false;
+        m_resizeEdges = 0;
         followLive();
         event->accept();
         return;
@@ -1171,7 +1332,8 @@ void SpectrumWaterfall::drawSelection(QPainter &p, const QRect &plot) const
 {
     if (!m_selection.valid
         && !(m_selectDragging && m_selectDragMoved)
-        && !m_selectMoving) {
+        && !m_selectMoving
+        && !m_selectResizing) {
         return;
     }
     TimeView tv;
@@ -1180,7 +1342,7 @@ void SpectrumWaterfall::drawSelection(QPainter &p, const QRect &plot) const
     }
 
     QRect r;
-    if (m_selectDragging && m_selectDragMoved && !m_selectMoving) {
+    if (m_selectDragging && m_selectDragMoved && !m_selectMoving && !m_selectResizing) {
         // Rubber-band in widget coords, clipped to dest (create mode only).
         r = QRect(m_selectPressPos, m_selectCurrPos).normalized();
         r = r.intersected(tv.dest);
@@ -1858,9 +2020,9 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
     }
 
     // Selection underlay first; cursor bubble on top after selection is finalized
-    // (during create/move drag the cursor overlay stays hidden so caption is readable).
+    // (during create/move/resize drag the cursor overlay stays hidden so caption is readable).
     drawSelection(p, plot);
-    if (!m_selectDragging && !m_selectMoving) {
+    if (!m_selectDragging && !m_selectMoving && !m_selectResizing) {
         drawCursor(p, plot);
     }
 }

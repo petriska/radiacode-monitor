@@ -189,10 +189,14 @@ private:
     /// Map two widget points to channel/row selection. notify=false while dragging.
     void setSelectionFromCorners(const QPoint &a, const QPoint &b, bool notify = true);
     void moveSelectionBy(int dCh, int dRow, bool notify);
+    void resizeSelectionEdge(int edges, const QPoint &pos, bool notify);
     void adjustSelectionAfterHistoryTrim(int dropped);
     QRect selectionPixelRect(const TimeView &tv) const;
     bool selectionContainsWidgetPos(const QPoint &pos) const;
     int rowFromWidgetY(int y, const TimeView &tv) const;
+    /// Bit flags: Left=1 Right=2 Top=4 Bottom=8; 0 = none / inside handled separately.
+    int hitTestSelectionEdge(const QPoint &pos) const;
+    void applySelectionHoverCursor(const QPoint &pos);
     /// Rasterize rate rows [firstRow, firstRow+nRows) and channels [ch0, ch1) → RGB image.
     QImage renderRatesToImage(int firstRow, int nRows, int ch0, int ch1) const;
     void applyPngMetadata(QImage *img, int firstRow, int lastRow, int ch0, int ch1,
@@ -210,6 +214,11 @@ private:
     static constexpr int kMaxRowsCap = 28800; // 8 h @ 1 s / row
     static constexpr float kScaleHysteresis = 0.02f;
     static constexpr int kSelectDragThresholdPx = 4;
+    static constexpr int kSelectEdgeHitPx = 7;
+    static constexpr int kEdgeLeft = 1;
+    static constexpr int kEdgeRight = 2;
+    static constexpr int kEdgeTop = 4;
+    static constexpr int kEdgeBottom = 8;
 
     QVector<Row> m_rows; // oldest at front, newest at back
     int m_historyMinutes = kDefaultHistoryMinutes;
@@ -249,10 +258,12 @@ private:
     Selection m_selection;
     bool m_selectDragging = false;   // creating a new box
     bool m_selectMoving = false;     // translating existing box
+    bool m_selectResizing = false;   // dragging an edge/corner
     bool m_selectDragMoved = false;
     QPoint m_selectPressPos;
     QPoint m_selectCurrPos;
-    Selection m_moveOrig;            // selection at move start
+    Selection m_moveOrig;            // selection at move/resize start
     int m_movePressCh = 0;
     int m_movePressRow = 0;
+    int m_resizeEdges = 0;           // kEdge* bit flags
 };
