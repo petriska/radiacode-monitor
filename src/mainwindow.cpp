@@ -431,6 +431,13 @@ MainWindow::MainWindow(QWidget *parent)
                 refreshSpectrumDisplay();
                 statusBar()->showMessage(tr("Selection cleared — spectrum back to live view"), 3000);
             }
+            // Clear MCS chart if the dialog is still open.
+            if (m_mcsChart) {
+                m_mcsChart->clear();
+            }
+            if (m_mcsInfoLabel) {
+                m_mcsInfoLabel->setText(tr("No selection — draw a box on the spectrogram."));
+            }
             return;
         }
         statusBar()->showMessage(
@@ -441,9 +448,12 @@ MainWindow::MainWindow(QWidget *parent)
                 .arg(row1)
                 .arg(row1 - row0 + 1),
             4000);
-        // Keep the spectrum plot in sync while viewing a selection extract.
+        // Keep extracts in sync while viewing them (spectrum plot + MCS dialog).
         if (m_spectrumFromSelection) {
             onExtractSelectionSpectrum();
+        }
+        if (m_mcsDialog) {
+            refreshSelectionMcsDialog();
         }
     });
     connect(m_waterfall, &SpectrumWaterfall::extractSpectrumRequested, this,
@@ -1982,14 +1992,25 @@ void MainWindow::onExtractSelectionSpectrum()
         6000);
 }
 
-void MainWindow::onExtractSelectionMcs()
+void MainWindow::refreshSelectionMcsDialog()
 {
-    if (!m_waterfall || !m_waterfall->hasSelection()) {
+    if (!m_mcsDialog || !m_mcsChart) {
         return;
     }
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        m_mcsChart->clear();
+        if (m_mcsInfoLabel) {
+            m_mcsInfoLabel->setText(tr("No selection — draw a box on the spectrogram."));
+        }
+        return;
+    }
+
     const auto pts = m_waterfall->extractSelectionMcs();
     if (pts.isEmpty()) {
-        statusBar()->showMessage(tr("Selection MCS is empty"), 3000);
+        m_mcsChart->clear();
+        if (m_mcsInfoLabel) {
+            m_mcsInfoLabel->setText(tr("Selection MCS is empty."));
+        }
         return;
     }
 
@@ -1997,10 +2018,14 @@ void MainWindow::onExtractSelectionMcs()
     float a0 = m_lastSpectrum.a0;
     float a1 = m_lastSpectrum.a1;
     float a2 = m_lastSpectrum.a2;
-    if (m_spectrumFromSelection && !m_selectionSpectrum.counts.isEmpty()) {
+    if (!m_selectionSpectrum.counts.isEmpty()) {
         a0 = m_selectionSpectrum.a0;
         a1 = m_selectionSpectrum.a1;
         a2 = m_selectionSpectrum.a2;
+    } else if (m_hasSpectrum) {
+        a0 = m_lastSpectrum.a0;
+        a1 = m_lastSpectrum.a1;
+        a2 = m_lastSpectrum.a2;
     }
 
     RoiWindow roi;
@@ -2030,22 +2055,45 @@ void MainWindow::onExtractSelectionMcs()
         samples.append(s);
     }
 
+    m_mcsChart->setSamples(samples, t0.isValid(), t0, {roi});
+    if (m_mcsInfoLabel) {
+        m_mcsInfoLabel->setText(
+            tr("ROI ch %1–%2 (%3–%4 keV) · %5 samples · rate sum in window "
+               "(updates when selection moves)")
+                .arg(sel.ch0)
+                .arg(sel.ch1 - 1)
+                .arg(roi.eMinKeV, 0, 'f', 1)
+                .arg(roi.eMaxKeV, 0, 'f', 1)
+                .arg(pts.size()));
+    }
+}
+
+void MainWindow::onExtractSelectionMcs()
+{
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        return;
+    }
+    if (m_waterfall->extractSelectionMcs().isEmpty()) {
+        statusBar()->showMessage(tr("Selection MCS is empty"), 3000);
+        return;
+    }
+
+    // Reuse existing dialog so it can live-update with selection changes.
+    if (m_mcsDialog) {
+        m_mcsDialog->raise();
+        m_mcsDialog->activateWindow();
+        refreshSelectionMcsDialog();
+        return;
+    }
+
     auto *dlg = new QDialog(this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setWindowTitle(tr("MCS from selection"));
     dlg->resize(720, 360);
     auto *lay = new QVBoxLayout(dlg);
     auto *chart = new TimeSeriesWidget(dlg);
-    chart->setSamples(samples, t0.isValid(), t0, {roi});
     lay->addWidget(chart, 1);
-    auto *info = new QLabel(
-        tr("ROI ch %1–%2 (%3–%4 keV) · %5 samples · integrated ΔN in window")
-            .arg(sel.ch0)
-            .arg(sel.ch1 - 1)
-            .arg(roi.eMinKeV, 0, 'f', 1)
-            .arg(roi.eMaxKeV, 0, 'f', 1)
-            .arg(pts.size()),
-        dlg);
+    auto *info = new QLabel(dlg);
     info->setWordWrap(true);
     lay->addWidget(info);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
@@ -2054,6 +2102,17 @@ void MainWindow::onExtractSelectionMcs()
     connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
     connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
     lay->addWidget(buttons);
+
+    m_mcsDialog = dlg;
+    m_mcsChart = chart;
+    m_mcsInfoLabel = info;
+    connect(dlg, &QObject::destroyed, this, [this] {
+        m_mcsDialog.clear();
+        m_mcsChart.clear();
+        m_mcsInfoLabel.clear();
+    });
+
+    refreshSelectionMcsDialog();
     dlg->show();
 }
 

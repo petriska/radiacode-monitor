@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QMainWindow>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -23,6 +24,8 @@ class SpectrumWidget;
 class SpectrumWaterfall;
 class RoiTimeSeriesPanel;
 class SpectrogramRecorder;
+class TimeSeriesWidget;
+class QDialog;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -55,6 +58,8 @@ private slots:
     void onExtractSelectionMcs();
     void onExportSelectionSpectrum();
     void onExportSelectionMcsCsv();
+    /// Rebuild MCS dialog chart from current waterfall selection (no-op if closed).
+    void refreshSelectionMcsDialog();
     void onError(const QString &message);
     void onStateChanged(QtRadiacode::RadiaCodeDevice::State state);
     void onDataBuf(const QList<QtRadiacode::RcDataItem> &items);
@@ -184,4 +189,9 @@ private:
     /// Spectrum plot showing integrated selection (overrides Live/BG/Net until cleared).
     bool m_spectrumFromSelection = false;
     QtRadiacode::RcSpectrum m_selectionSpectrum;
+
+    /// Live-updating MCS extract dialog (opened via context menu).
+    QPointer<QDialog> m_mcsDialog;
+    QPointer<TimeSeriesWidget> m_mcsChart;
+    QPointer<QLabel> m_mcsInfoLabel;
 };
