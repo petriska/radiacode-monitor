@@ -58,7 +58,8 @@ private slots:
     void onExtractSelectionMcs();
     void onExportSelectionSpectrum();
     void onExportSelectionMcsCsv();
-    /// Rebuild MCS dialog chart from current waterfall selection (no-op if closed).
+    /// Rebuild extract dialogs from current waterfall selection (no-op if closed).
+    void refreshSelectionSpectrumDialog();
     void refreshSelectionMcsDialog();
     void onError(const QString &message);
     void onStateChanged(QtRadiacode::RadiaCodeDevice::State state);
@@ -186,11 +187,14 @@ private:
     QtRadiacode::RcSpectrum m_backgroundSpectrum;
     bool m_hasBackground = false;
 
-    /// Spectrum plot showing integrated selection (overrides Live/BG/Net until cleared).
-    bool m_spectrumFromSelection = false;
+    /// Last selection spectrum (for export); also fed to the extract dialog.
     QtRadiacode::RcSpectrum m_selectionSpectrum;
 
-    /// Live-updating MCS extract dialog (opened via context menu).
+    /// Live-updating extract dialogs (opened via waterfall context menu).
+    QPointer<QDialog> m_selectionSpectrumDialog;
+    QPointer<SpectrumWidget> m_selectionSpectrumPlot;
+    QPointer<QLabel> m_selectionSpectrumInfo;
+
     QPointer<QDialog> m_mcsDialog;
     QPointer<TimeSeriesWidget> m_mcsChart;
     QPointer<QLabel> m_mcsInfoLabel;

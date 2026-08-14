@@ -1221,10 +1221,10 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
 
     menu.addSeparator();
 
-    QAction *specAct = menu.addAction(tr("Spectrum from selection"));
+    QAction *specAct = menu.addAction(tr("Spectrum from selection…"));
     specAct->setEnabled(m_selection.valid);
     specAct->setToolTip(
-        tr("Integrate ΔN over the selected time range into the spectrum plot."));
+        tr("Open a live-updating spectrum of integrated ΔN for the selection."));
 
     QAction *mcsAct = menu.addAction(tr("MCS from selection…"));
     mcsAct->setEnabled(m_selection.valid);

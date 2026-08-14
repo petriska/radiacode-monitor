@@ -29,10 +29,9 @@
   region; caption shows keV/channels, row count, wall-clock span. Esc / click /
   context menu **Clear selection**. Move by dragging inside the box. Selection
   tracks history trim.
-- **Selection extract (E2):** context menu **Spectrum from selection** (integrates
-  ΔN into the spectrum plot; clear selection to return to live), **MCS from
-  selection…** (time-series dialog), **Export selection spectrum…** /
-  **Export selection MCS CSV…**.
+- **Selection extract (E2):** context menu **Spectrum from selection…** and
+  **MCS from selection…** open separate live-updating dialogs (move/resize the
+  box to refresh), plus **Export selection spectrum…** / **Export selection MCS CSV…**.
 
 ### Changed
 

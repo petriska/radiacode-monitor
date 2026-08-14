@@ -425,13 +425,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_waterfall, &SpectrumWaterfall::selectionChanged, this,
             [this](bool has, int ch0, int ch1, int row0, int row1) {
         if (!has) {
-            if (m_spectrumFromSelection) {
-                m_spectrumFromSelection = false;
-                m_selectionSpectrum = {};
-                refreshSpectrumDisplay();
-                statusBar()->showMessage(tr("Selection cleared — spectrum back to live view"), 3000);
+            m_selectionSpectrum = {};
+            if (m_selectionSpectrumPlot) {
+                m_selectionSpectrumPlot->clear();
             }
-            // Clear MCS chart if the dialog is still open.
+            if (m_selectionSpectrumInfo) {
+                m_selectionSpectrumInfo->setText(
+                    tr("No selection — draw a box on the spectrogram."));
+            }
             if (m_mcsChart) {
                 m_mcsChart->clear();
             }
@@ -448,9 +449,9 @@ MainWindow::MainWindow(QWidget *parent)
                 .arg(row1)
                 .arg(row1 - row0 + 1),
             4000);
-        // Keep extracts in sync while viewing them (spectrum plot + MCS dialog).
-        if (m_spectrumFromSelection) {
-            onExtractSelectionSpectrum();
+        // Keep extract dialogs in sync while open.
+        if (m_selectionSpectrumDialog) {
+            refreshSelectionSpectrumDialog();
         }
         if (m_mcsDialog) {
             refreshSelectionMcsDialog();
@@ -1942,10 +1943,6 @@ QtRadiacode::RcSpectrum MainWindow::computeNetSpectrum(const QtRadiacode::RcSpec
 
 QtRadiacode::RcSpectrum MainWindow::spectrumForView() const
 {
-    if (m_spectrumFromSelection && !m_selectionSpectrum.counts.isEmpty()) {
-        return m_selectionSpectrum;
-    }
-
     const auto view = m_spectrumViewCombo
         ? static_cast<SpectrumView>(m_spectrumViewCombo->currentData().toInt())
         : SpectrumView::Live;
@@ -1964,34 +1961,97 @@ QtRadiacode::RcSpectrum MainWindow::spectrumForView() const
     }
 }
 
-void MainWindow::onExtractSelectionSpectrum()
+void MainWindow::refreshSelectionSpectrumDialog()
 {
-    if (!m_waterfall || !m_waterfall->hasSelection()) {
+    if (!m_selectionSpectrumDialog || !m_selectionSpectrumPlot) {
         return;
     }
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        m_selectionSpectrum = {};
+        m_selectionSpectrumPlot->clear();
+        if (m_selectionSpectrumInfo) {
+            m_selectionSpectrumInfo->setText(
+                tr("No selection — draw a box on the spectrogram."));
+        }
+        return;
+    }
+
     const auto ex = m_waterfall->extractSelectionSpectrum();
     if (ex.counts.isEmpty()) {
-        statusBar()->showMessage(tr("Selection spectrum is empty"), 3000);
+        m_selectionSpectrum = {};
+        m_selectionSpectrumPlot->clear();
+        if (m_selectionSpectrumInfo) {
+            m_selectionSpectrumInfo->setText(tr("Selection spectrum is empty."));
+        }
         return;
     }
+
     m_selectionSpectrum.counts = ex.counts;
     m_selectionSpectrum.durationSec = ex.durationSec;
     m_selectionSpectrum.a0 = ex.a0;
     m_selectionSpectrum.a1 = ex.a1;
     m_selectionSpectrum.a2 = ex.a2;
-    m_spectrumFromSelection = true;
-    refreshSpectrumDisplay();
+    m_selectionSpectrumPlot->setSpectrum(ex.counts, ex.a0, ex.a1, ex.a2);
+
     const auto sel = m_waterfall->selection();
-    statusBar()->showMessage(
-        tr("Spectrum from selection: ch %1–%2 · %3 s live · total %4 counts "
-           "(clear selection to return to live)")
-            .arg(sel.ch0)
-            .arg(sel.ch1 - 1)
-            .arg(ex.durationSec)
-            .arg(spectrumTotalCounts(m_selectionSpectrum)),
-        6000);
+    if (m_selectionSpectrumInfo) {
+        m_selectionSpectrumInfo->setText(
+            tr("Integrated ΔN · ch %1–%2 · live %3 · total %4 counts "
+               "(updates when selection moves)")
+                .arg(sel.ch0)
+                .arg(sel.ch1 - 1)
+                .arg(formatDuration(ex.durationSec))
+                .arg(spectrumTotalCounts(m_selectionSpectrum)));
+    }
 }
 
+void MainWindow::onExtractSelectionSpectrum()
+{
+    if (!m_waterfall || !m_waterfall->hasSelection()) {
+        return;
+    }
+    if (m_waterfall->extractSelectionSpectrum().counts.isEmpty()) {
+        statusBar()->showMessage(tr("Selection spectrum is empty"), 3000);
+        return;
+    }
+
+    if (m_selectionSpectrumDialog) {
+        m_selectionSpectrumDialog->raise();
+        m_selectionSpectrumDialog->activateWindow();
+        refreshSelectionSpectrumDialog();
+        return;
+    }
+
+    auto *dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(tr("Spectrum from selection"));
+    dlg->resize(800, 400);
+    auto *lay = new QVBoxLayout(dlg);
+    auto *plot = new SpectrumWidget(dlg);
+    plot->setMinimumHeight(220);
+    lay->addWidget(plot, 1);
+    auto *info = new QLabel(dlg);
+    info->setWordWrap(true);
+    lay->addWidget(info);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    auto *exportBtn = buttons->addButton(tr("Export…"), QDialogButtonBox::ActionRole);
+    connect(exportBtn, &QPushButton::clicked, this, [this] { onExportSelectionSpectrum(); });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+    lay->addWidget(buttons);
+
+    m_selectionSpectrumDialog = dlg;
+    m_selectionSpectrumPlot = plot;
+    m_selectionSpectrumInfo = info;
+    connect(dlg, &QObject::destroyed, this, [this] {
+        m_selectionSpectrumDialog.clear();
+        m_selectionSpectrumPlot.clear();
+        m_selectionSpectrumInfo.clear();
+    });
+
+    refreshSelectionSpectrumDialog();
+    dlg->show();
+}
 void MainWindow::refreshSelectionMcsDialog()
 {
     if (!m_mcsDialog || !m_mcsChart) {
@@ -2121,11 +2181,17 @@ void MainWindow::onExportSelectionSpectrum()
     if (!m_waterfall || !m_waterfall->hasSelection()) {
         return;
     }
-    // Ensure we have the latest extract.
-    onExtractSelectionSpectrum();
-    if (m_selectionSpectrum.counts.isEmpty()) {
+    // Ensure we have the latest extract in m_selectionSpectrum.
+    const auto ex = m_waterfall->extractSelectionSpectrum();
+    if (ex.counts.isEmpty()) {
+        statusBar()->showMessage(tr("Selection spectrum is empty"), 3000);
         return;
     }
+    m_selectionSpectrum.counts = ex.counts;
+    m_selectionSpectrum.durationSec = ex.durationSec;
+    m_selectionSpectrum.a0 = ex.a0;
+    m_selectionSpectrum.a1 = ex.a1;
+    m_selectionSpectrum.a2 = ex.a2;
 
     QString defaultName = QStringLiteral("selection-spectrum");
     if (m_waterfall->deviceSerial().size()) {
@@ -2214,11 +2280,7 @@ void MainWindow::refreshSpectrumDisplay()
         m_spectrumTotalLabel->setText(QStringLiteral("—"));
     } else {
         m_spectrum->setSpectrum(sp.counts, sp.a0, sp.a1, sp.a2);
-        QString liveText = formatDuration(sp.durationSec);
-        if (m_spectrumFromSelection) {
-            liveText = tr("sel %1").arg(liveText);
-        }
-        m_spectrumLiveLabel->setText(liveText);
+        m_spectrumLiveLabel->setText(formatDuration(sp.durationSec));
         m_spectrumTotalLabel->setText(tr("%1").arg(spectrumTotalCounts(sp)));
     }
 
