@@ -781,31 +781,36 @@ QRgb SpectrumWaterfall::rateToColor(float rate) const
 {
     const float lo = colorMapMin();
     const float hi = colorMapMax();
-    const float t = (hi > lo + 1e-12f)
-        ? std::clamp((rate - lo) / (hi - lo), 0.0f, 1.0f)
-        : 0.0f;
+    if (hi <= lo + 1e-12f) {
+        return qRgb(0, 0, 0);
+    }
+    const float t = (rate - lo) / (hi - lo);
+    // Outside the window: black (not white).
+    if (t < 0.0f || t > 1.0f) {
+        return qRgb(0, 0, 0);
+    }
     const float u = std::pow(t, 0.55f);
 
+    // Classic heatmap: blue → cyan → green → yellow → red.
     int r = 0;
     int g = 0;
     int b = 0;
     if (u < 0.25f) {
         const float s = u / 0.25f;
-        b = int(80 + 175 * s);
-    } else if (u < 0.5f) {
-        const float s = (u - 0.25f) / 0.25f;
         g = int(255 * s);
         b = 255;
+    } else if (u < 0.5f) {
+        const float s = (u - 0.25f) / 0.25f;
+        g = 255;
+        b = int(255 * (1.0f - s));
     } else if (u < 0.75f) {
         const float s = (u - 0.5f) / 0.25f;
         r = int(255 * s);
         g = 255;
-        b = int(255 * (1.0f - s));
     } else {
         const float s = (u - 0.75f) / 0.25f;
         r = 255;
-        g = 255;
-        b = int(255 * s);
+        g = int(255 * (1.0f - s));
     }
     return qRgb(r, g, b);
 }

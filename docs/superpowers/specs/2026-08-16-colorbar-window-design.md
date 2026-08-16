@@ -36,8 +36,8 @@ hi = autoMax × ceilFrac
 t  = clamp((rate − lo) / (hi − lo), 0, 1)   // then existing gamma 0.55 + palette
 ```
 
-- `rate < lo` → black (palette start)  
-- `rate > hi` → white (palette end)  
+- `rate < lo` or `rate > hi` → black  
+- inside `[lo, hi]` → classic heatmap (blue → red)  
 - `autoMax` = max rate over history, same ~2 % hysteresis as today  
 
 `colorMapMin` / `colorMapMax` stay as they are.
