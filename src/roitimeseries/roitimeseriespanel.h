@@ -65,12 +65,6 @@ private:
     void loadSettings();
     void saveSettings() const;
 
-    /// Read-only Counts / cps cells for one table row.
-    void ensureStatsItems(int row);
-    /// Recompute Counts (Σ from spectrum start) and cps (ΔN/Δt like the chart).
-    void updateRoiLiveStats(const QtRadiacode::RcSpectrum &sp);
-    void clearRoiLiveStats();
-    void resetRoiRateBaseline();
     /// Clear highlighted row selection (e.g. click outside the table).
     void clearRoiTableSelection();
 
@@ -95,11 +89,4 @@ private:
     bool m_recording = false;
     bool m_connected = false;
     bool m_blockTableSignal = false;
-
-    // Last spectrum for live ROI table columns (Counts / cps).
-    bool m_hasLastSpectrum = false;
-    QtRadiacode::RcSpectrum m_lastSpectrum;
-    bool m_hasPrevStats = false;
-    quint32 m_prevLiveSec = 0;
-    QVector<quint64> m_prevRoiCounts;
 };

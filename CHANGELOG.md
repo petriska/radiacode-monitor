@@ -40,6 +40,8 @@
 
 ### Changed
 
+- ROI table: dropped **Counts** and **cps** columns so the narrow setup panel fits
+  (values remain on the chart and in CSV export).
 - Waterfall **colour bar** (SDR Console): palette is squeezed between floor and ceil;
   outside the window = black. Drag edges to resize; drag the middle to slide the
   window. Bar axis is 0…auto-max (not 0…200 %).
