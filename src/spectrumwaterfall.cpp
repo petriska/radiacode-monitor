@@ -858,20 +858,17 @@ QRgb SpectrumWaterfall::rateToColor(float rate) const
     if (hi <= lo + 1e-12f) {
         return qRgb(0, 0, 0);
     }
-    float t = 0.0f;
-    if (m_colorMap == ColorMap::Log) {
-        // log(rate+ε) so zero rates stay defined; ε ~ 4 decades below ceil.
-        const float eps = std::max(hi * 1e-4f, 1e-12f);
-        const float den = std::log(hi + eps) - std::log(lo + eps);
-        if (den <= 1e-12f) {
-            return qRgb(0, 0, 0);
-        }
-        t = (std::log(std::max(rate, 0.0f) + eps) - std::log(lo + eps)) / den;
-    } else {
-        t = (rate - lo) / (hi - lo);
-    }
-    if (t < 0.0f) {
+    const float lin = (rate - lo) / (hi - lo);
+    if (lin < 0.0f) {
         return qRgb(0, 0, 0);
+    }
+    float t = lin;
+    if (m_colorMap == ColorMap::Log) {
+        // Inverse-log: stretch the low/mid (blue), compress the top (red).
+        // Standard log did the opposite (any small rate jumped to red).
+        constexpr float k = 99.0f; // ~2 decades, inverted
+        const float u = std::min(lin, 1.0f);
+        t = 1.0f - std::log(1.0f + k * (1.0f - u)) / std::log(1.0f + k);
     }
     return heatMapColor(std::min(t, 1.0f));
 }

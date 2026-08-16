@@ -357,7 +357,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_waterfallColorMapCombo->setToolTip(
             tr("How count rate maps onto the colour bar.\n"
                "Linear: equal cps steps.\n"
-               "Log: more of the palette for weak rates (SDR-style)."));
+               "Log: blue stretched across most of the range; red only on peaks."));
         form->addRow(tr("Colour mapping"), m_waterfallColorMapCombo);
         lay->addLayout(form);
 
