@@ -98,7 +98,7 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 
 - `.rcsg` binary via `src/spectrogramfile.*` — see header for layout; `AppendWriter` for continuous.
 - `SpectrogramRecorder` — daily `.rcsg` append; day roll → `.rcsg.gz` + keepDays prune.
-- `SpectrogramCompress` — gzip via QtZlib.
+- `SpectrogramCompress` — gzip via system zlib (Ubuntu: `zlib1g-dev`) or Qt-bundled `QtZlib`.
 - Save/load full buffer; continuous checkbox in Live panel.
 
 **Still planned (“spectrogram analysis”)**

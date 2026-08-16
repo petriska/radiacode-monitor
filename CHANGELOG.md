@@ -33,6 +33,11 @@
   **MCS from selection…** open separate live-updating dialogs (move/resize the
   box to refresh), plus **Export selection spectrum…** / **Export selection MCS CSV…**.
 
+### Fixed
+
+- Ubuntu/Debian build: spectrogram gzip uses **system zlib** (`zlib1g-dev`). Distro Qt
+  does not ship `QtZlib` (that header exists only in official Qt kits).
+
 ### Changed
 
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer

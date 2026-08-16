@@ -166,6 +166,33 @@ target_link_libraries(radiacode-monitor PRIVATE
   Qt6::Widgets
 )
 
+# Gzip (.rcsg.gz). Distro Qt has no QtZlib — use system zlib. Official kits bundle it.
+find_package(ZLIB)
+if(ZLIB_FOUND)
+  target_link_libraries(radiacode-monitor PRIVATE ZLIB::ZLIB)
+else()
+  set(_qt_zlib_header "")
+  get_target_property(_qt_core_incs Qt6::Core INTERFACE_INCLUDE_DIRECTORIES)
+  if(_qt_core_incs)
+    foreach(_inc IN LISTS _qt_core_incs)
+      if(EXISTS "${_inc}/QtZlib/zlib.h")
+        set(_qt_zlib_header "${_inc}/QtZlib/zlib.h")
+        break()
+      endif()
+    endforeach()
+  endif()
+  if(_qt_zlib_header STREQUAL "")
+    message(FATAL_ERROR
+      "zlib not found (needed to compress spectrogram history).\n"
+      "  Ubuntu/Debian:  sudo apt install zlib1g-dev\n"
+      "  Fedora:         sudo dnf install zlib-devel\n"
+      "  Official Qt kits ship QtZlib; check CMAKE_PREFIX_PATH.")
+  endif()
+  message(STATUS "zlib: Qt-bundled QtZlib (${_qt_zlib_header})")
+  unset(_qt_zlib_header)
+  unset(_qt_core_incs)
+endif()
+
 # macOS/iOS: static Qt permission plugin required for QBluetoothPermission.
 # Without it: "Could not find permission plugin for QBluetoothPermission".
 if(APPLE)

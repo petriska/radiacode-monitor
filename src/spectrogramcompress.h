@@ -3,7 +3,7 @@
 #include <QString>
 
 // Gzip helpers for closed spectrogram day files (.rcsg → .rcsg.gz).
-// Uses zlib from Qt (QtZlib). Streaming; suitable for multi-hour files.
+// Uses system zlib (distro Qt) or Qt-bundled QtZlib (official kits).
 
 namespace SpectrogramCompress {
 
