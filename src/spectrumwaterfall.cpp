@@ -747,6 +747,16 @@ void SpectrumWaterfall::resetColorScale()
     emit colorScaleChanged(m_colorFloorFrac, m_colorCeilFrac);
 }
 
+void SpectrumWaterfall::setColorMap(ColorMap map)
+{
+    if (m_colorMap == map) {
+        return;
+    }
+    m_colorMap = map;
+    rebuildViewportImage();
+    update();
+}
+
 QRect SpectrumWaterfall::colorBarRect() const
 {
     const QRect plot = plotRect();
@@ -848,7 +858,18 @@ QRgb SpectrumWaterfall::rateToColor(float rate) const
     if (hi <= lo + 1e-12f) {
         return qRgb(0, 0, 0);
     }
-    const float t = (rate - lo) / (hi - lo);
+    float t = 0.0f;
+    if (m_colorMap == ColorMap::Log) {
+        // log(rate+ε) so zero rates stay defined; ε ~ 4 decades below ceil.
+        const float eps = std::max(hi * 1e-4f, 1e-12f);
+        const float den = std::log(hi + eps) - std::log(lo + eps);
+        if (den <= 1e-12f) {
+            return qRgb(0, 0, 0);
+        }
+        t = (std::log(std::max(rate, 0.0f) + eps) - std::log(lo + eps)) / den;
+    } else {
+        t = (rate - lo) / (hi - lo);
+    }
     if (t < 0.0f) {
         return qRgb(0, 0, 0);
     }

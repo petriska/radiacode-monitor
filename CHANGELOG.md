@@ -32,6 +32,8 @@
 - **Selection extract (E2):** context menu **Spectrum from selection…** and
   **MCS from selection…** open separate live-updating dialogs (move/resize the
   box to refresh), plus **Export selection spectrum…** / **Export selection MCS CSV…**.
+- Spectrogram **colour mapping** (Spectrum tab): **Linear** or **Log** (weak rates use
+  more of the palette). Saved in settings.
 
 ### Fixed
 

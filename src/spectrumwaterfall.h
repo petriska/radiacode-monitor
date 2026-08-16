@@ -23,6 +23,10 @@ public:
     enum class DisplayMode { Live, Net };
     Q_ENUM(DisplayMode)
 
+    /// How rates in [floor, ceil] map onto the palette.
+    enum class ColorMap { Linear, Log };
+    Q_ENUM(ColorMap)
+
     explicit SpectrumWaterfall(QWidget *parent = nullptr);
 
     /// Visible channel range [xMin, xMax) — typically mirrored from SpectrumWidget zoom.
@@ -73,6 +77,8 @@ public:
     void resetColorScale();
     /// Set floor and ceil together (window drag). Applies the same clamps as the setters.
     void setColorWindow(float floorFrac, float ceilFrac);
+    void setColorMap(ColorMap map);
+    ColorMap colorMap() const { return m_colorMap; }
     /// Auto matrix max used as the reference for floor/ceil (cps).
     float autoDisplayMax() const { return m_displayMax; }
 
@@ -285,6 +291,7 @@ private:
     float m_displayMax = 1.0f; // auto max over history (reference)
     float m_colorCeilFrac = 1.0f;  // colour map top = displayMax * ceil
     float m_colorFloorFrac = 0.0f; // colour map bottom
+    ColorMap m_colorMap = ColorMap::Linear;
     bool m_colorBarDragging = false;
     ColorBarDrag m_colorBarDragMode = ColorBarDrag::None;
     float m_windowDragFloor0 = 0.0f;

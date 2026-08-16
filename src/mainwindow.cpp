@@ -349,6 +349,16 @@ MainWindow::MainWindow(QWidget *parent)
                "On the colour bar: drag edges to set floor/ceil, drag the middle\n"
                "to slide the window, wheel = gain, double-click to reset."));
         form->addRow(tr("Colour scale"), m_waterfallColorScaleSpin);
+
+        m_waterfallColorMapCombo = new QComboBox(box);
+        m_waterfallColorMapCombo->addItem(tr("Linear"),
+                                          int(SpectrumWaterfall::ColorMap::Linear));
+        m_waterfallColorMapCombo->addItem(tr("Log"), int(SpectrumWaterfall::ColorMap::Log));
+        m_waterfallColorMapCombo->setToolTip(
+            tr("How count rate maps onto the colour bar.\n"
+               "Linear: equal cps steps.\n"
+               "Log: more of the palette for weak rates (SDR-style)."));
+        form->addRow(tr("Colour mapping"), m_waterfallColorMapCombo);
         lay->addLayout(form);
 
         m_waterfallLiveBtn = new QPushButton(tr("Follow live"), box);
@@ -648,6 +658,19 @@ MainWindow::MainWindow(QWidget *parent)
         m_waterfall->setColorCeilFraction(float(pct) / 100.0f);
         QSettings().setValue(QStringLiteral("waterfall/colorScalePercent"), pct);
     });
+    connect(m_waterfallColorMapCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        if (!m_waterfall || !m_waterfallColorMapCombo) {
+            return;
+        }
+        const auto map =
+            SpectrumWaterfall::ColorMap(m_waterfallColorMapCombo->currentData().toInt());
+        m_waterfall->setColorMap(map);
+        QSettings().setValue(QStringLiteral("waterfall/colorMap"),
+                             map == SpectrumWaterfall::ColorMap::Log
+                                 ? QStringLiteral("log")
+                                 : QStringLiteral("linear"));
+    });
     connect(m_waterfall, &SpectrumWaterfall::colorScaleChanged, this,
             [this](float /*floor*/, float ceilFrac) {
         if (!m_waterfallColorScaleSpin) {
@@ -803,6 +826,21 @@ MainWindow::MainWindow(QWidget *parent)
             m_waterfallColorScaleSpin->setValue(pct);
             if (m_waterfall) {
                 m_waterfall->setColorCeilFraction(float(pct) / 100.0f);
+            }
+        }
+        if (m_waterfallColorMapCombo) {
+            const QString mapId =
+                settings.value(QStringLiteral("waterfall/colorMap"), QStringLiteral("linear"))
+                    .toString();
+            const int idx = m_waterfallColorMapCombo->findData(
+                int(mapId.compare(QLatin1String("log"), Qt::CaseInsensitive) == 0
+                        ? SpectrumWaterfall::ColorMap::Log
+                        : SpectrumWaterfall::ColorMap::Linear));
+            const QSignalBlocker blocker(m_waterfallColorMapCombo);
+            m_waterfallColorMapCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+            if (m_waterfall) {
+                m_waterfall->setColorMap(
+                    SpectrumWaterfall::ColorMap(m_waterfallColorMapCombo->currentData().toInt()));
             }
         }
         if (m_waterfallHistoryCombo) {
