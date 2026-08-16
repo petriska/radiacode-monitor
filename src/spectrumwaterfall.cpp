@@ -25,6 +25,70 @@
 #include <cmath>
 #include <cstring>
 
+namespace {
+
+// GQRX / SDR# waterfall (sampled from Wikimedia PAL-I.png colour bar).
+// t=0 min (black) … t=1 max (dark red); cyan→white→yellow, no green.
+struct HeatStop {
+    float t;
+    int r;
+    int g;
+    int b;
+};
+
+constexpr HeatStop kHeatStops[] = {
+    {0.00f, 0, 0, 0},
+    {0.03f, 0, 0, 20},
+    {0.08f, 0, 0, 50},
+    {0.16f, 0, 0, 80},
+    {0.22f, 1, 0, 128},
+    {0.25f, 1, 16, 157},
+    {0.28f, 13, 66, 194},
+    {0.31f, 22, 123, 237},
+    {0.34f, 40, 149, 254},
+    {0.37f, 79, 170, 253},
+    {0.41f, 157, 208, 255},
+    {0.44f, 239, 250, 255},
+    {0.47f, 255, 254, 223},
+    {0.50f, 255, 255, 175},
+    {0.53f, 255, 255, 77},
+    {0.56f, 252, 248, 1},
+    {0.59f, 255, 222, 5},
+    {0.63f, 255, 193, 12},
+    {0.66f, 255, 137, 19},
+    {0.69f, 254, 90, 19},
+    {0.72f, 253, 50, 9},
+    {0.75f, 255, 13, 2},
+    {0.81f, 219, 1, 0},
+    {0.88f, 154, 0, 0},
+    {1.00f, 76, 0, 2},
+};
+
+QRgb heatMapColor(float u)
+{
+    constexpr int n = int(sizeof(kHeatStops) / sizeof(kHeatStops[0]));
+    if (u <= kHeatStops[0].t) {
+        return qRgb(kHeatStops[0].r, kHeatStops[0].g, kHeatStops[0].b);
+    }
+    if (u >= kHeatStops[n - 1].t) {
+        return qRgb(kHeatStops[n - 1].r, kHeatStops[n - 1].g, kHeatStops[n - 1].b);
+    }
+    int i = 1;
+    while (i < n && u > kHeatStops[i].t) {
+        ++i;
+    }
+    const HeatStop &a = kHeatStops[i - 1];
+    const HeatStop &c = kHeatStops[i];
+    const float span = c.t - a.t;
+    const float s = (span > 1e-8f) ? (u - a.t) / span : 0.0f;
+    const int r = int(std::lround(a.r + (c.r - a.r) * double(s)));
+    const int g = int(std::lround(a.g + (c.g - a.g) * double(s)));
+    const int b = int(std::lround(a.b + (c.b - a.b) * double(s)));
+    return qRgb(r, g, b);
+}
+
+} // namespace
+
 SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
     : QWidget(parent)
 {
@@ -785,34 +849,10 @@ QRgb SpectrumWaterfall::rateToColor(float rate) const
         return qRgb(0, 0, 0);
     }
     const float t = (rate - lo) / (hi - lo);
-    // Outside the window: black (not white).
-    if (t < 0.0f || t > 1.0f) {
+    if (t < 0.0f) {
         return qRgb(0, 0, 0);
     }
-    const float u = std::pow(t, 0.55f);
-
-    // Classic heatmap: blue → cyan → green → yellow → red.
-    int r = 0;
-    int g = 0;
-    int b = 0;
-    if (u < 0.25f) {
-        const float s = u / 0.25f;
-        g = int(255 * s);
-        b = 255;
-    } else if (u < 0.5f) {
-        const float s = (u - 0.25f) / 0.25f;
-        g = 255;
-        b = int(255 * (1.0f - s));
-    } else if (u < 0.75f) {
-        const float s = (u - 0.5f) / 0.25f;
-        r = int(255 * s);
-        g = 255;
-    } else {
-        const float s = (u - 0.75f) / 0.25f;
-        r = 255;
-        g = int(255 * (1.0f - s));
-    }
-    return qRgb(r, g, b);
+    return heatMapColor(std::min(t, 1.0f));
 }
 
 void SpectrumWaterfall::drawColorBar(QPainter &p, const QRect &plot) const

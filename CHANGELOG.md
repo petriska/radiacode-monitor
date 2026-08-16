@@ -43,8 +43,8 @@
 - Waterfall **colour bar** (SDR Console): palette is squeezed between floor and ceil;
   outside the window = black. Drag edges to resize; drag the middle to slide the
   window. Bar axis is 0…auto-max (not 0…200 %).
-- Waterfall **palette**: classic heatmap (blue min → cyan → green → yellow → red max);
-  values outside the scale stay black (no white clip).
+- Waterfall **palette**: SDR/GQRX heatmap (black → navy → cyan → white → yellow →
+  red → dark red). Below the window stays black; above clips to dark red.
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer
   rebuilds the full history from cumulative spectrum snapshots.
 - **UI layout:** collapsible **setup panel** (Device / Live / Acquisition / ROI) on the
