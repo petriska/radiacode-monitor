@@ -40,6 +40,9 @@
 
 ### Changed
 
+- Waterfall **colour bar** (SDR Console): palette is squeezed between floor and ceil;
+  below = black, above = white. Drag edges to resize; drag the middle to slide the
+  window. Bar axis is 0…auto-max (not 0…200 %).
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer
   rebuilds the full history from cumulative spectrum snapshots.
 - **UI layout:** collapsible **setup panel** (Device / Live / Acquisition / ROI) on the

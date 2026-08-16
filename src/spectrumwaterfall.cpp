@@ -629,8 +629,9 @@ void SpectrumWaterfall::setColorCeilFraction(float frac)
     const float f = std::clamp(frac, kColorCeilMin, kColorCeilMax);
     // Keep floor strictly below ceil.
     float floor = m_colorFloorFrac;
-    if (floor >= f * 0.95f) {
-        floor = std::max(0.0f, f * 0.5f);
+    const float maxFloor = f * (1.0f - kColorMinGapFrac);
+    if (floor > maxFloor) {
+        floor = std::max(0.0f, maxFloor);
     }
     if (qAbs(f - m_colorCeilFrac) < 1e-6f && qAbs(floor - m_colorFloorFrac) < 1e-6f) {
         return;
@@ -644,11 +645,26 @@ void SpectrumWaterfall::setColorCeilFraction(float frac)
 
 void SpectrumWaterfall::setColorFloorFraction(float frac)
 {
-    const float maxFloor = std::min(kColorFloorMax, m_colorCeilFrac * 0.95f);
+    const float maxFloor = m_colorCeilFrac * (1.0f - kColorMinGapFrac);
     const float f = std::clamp(frac, 0.0f, maxFloor);
     if (qAbs(f - m_colorFloorFrac) < 1e-6f) {
         return;
     }
+    m_colorFloorFrac = f;
+    rebuildViewportImage();
+    update();
+    emit colorScaleChanged(m_colorFloorFrac, m_colorCeilFrac);
+}
+
+void SpectrumWaterfall::setColorWindow(float floorFrac, float ceilFrac)
+{
+    const float c = std::clamp(ceilFrac, kColorCeilMin, kColorCeilMax);
+    const float maxFloor = c * (1.0f - kColorMinGapFrac);
+    const float f = std::clamp(floorFrac, 0.0f, maxFloor);
+    if (qAbs(c - m_colorCeilFrac) < 1e-6f && qAbs(f - m_colorFloorFrac) < 1e-6f) {
+        return;
+    }
+    m_colorCeilFrac = c;
     m_colorFloorFrac = f;
     rebuildViewportImage();
     update();
@@ -673,20 +689,91 @@ QRect SpectrumWaterfall::colorBarRect() const
     return QRect(plot.right() + kColorBarGap, plot.top(), kColorBarWidth, plot.height());
 }
 
-void SpectrumWaterfall::applyColorScaleFromBarY(int y, bool floorHandle)
+float SpectrumWaterfall::fracFromBarY(int y) const
 {
     const QRect bar = colorBarRect();
     if (bar.height() <= 1) {
-        return;
+        return 0.0f;
     }
-    // Top of bar = high fraction, bottom = low fraction (of auto max).
     const float t = std::clamp(float(y - bar.top()) / float(bar.height() - 1), 0.0f, 1.0f);
-    const float fromTop = 1.0f - t; // 1 at top, 0 at bottom
-    if (floorHandle) {
-        setColorFloorFraction(std::clamp(fromTop * kColorFloorMax, 0.0f, kColorFloorMax));
-    } else {
-        const float ceil = kColorCeilMin + (kColorCeilMax - kColorCeilMin) * fromTop;
-        setColorCeilFraction(ceil);
+    return 1.0f - t;
+}
+
+int SpectrumWaterfall::yFromBarFrac(float frac) const
+{
+    const QRect bar = colorBarRect();
+    const float n = std::clamp(frac, 0.0f, 1.0f);
+    return bar.bottom() - int(std::lround(double(n) * double(bar.height() - 1)));
+}
+
+SpectrumWaterfall::ColorBarDrag SpectrumWaterfall::hitTestColorBar(const QPoint &pos) const
+{
+    const QRect bar = colorBarRect();
+    if (!bar.contains(pos)) {
+        return ColorBarDrag::None;
+    }
+    const int yCeil = yFromBarFrac(m_colorCeilFrac);
+    const int yFloor = yFromBarFrac(m_colorFloorFrac);
+    if (std::abs(pos.y() - yCeil) <= kColorBarEdgeHitPx) {
+        return ColorBarDrag::Ceil;
+    }
+    if (std::abs(pos.y() - yFloor) <= kColorBarEdgeHitPx) {
+        return ColorBarDrag::Floor;
+    }
+    const int yTop = std::min(yCeil, yFloor);
+    const int yBot = std::max(yCeil, yFloor);
+    if (pos.y() >= yTop && pos.y() <= yBot) {
+        return ColorBarDrag::Window;
+    }
+    return (std::abs(pos.y() - yCeil) <= std::abs(pos.y() - yFloor))
+        ? ColorBarDrag::Ceil
+        : ColorBarDrag::Floor;
+}
+
+void SpectrumWaterfall::applyColorBarDrag(int y)
+{
+    const float frac = fracFromBarY(y);
+    switch (m_colorBarDragMode) {
+    case ColorBarDrag::Floor:
+        setColorFloorFraction(frac);
+        break;
+    case ColorBarDrag::Ceil:
+        setColorCeilFraction(frac);
+        break;
+    case ColorBarDrag::Window: {
+        const float d = frac - m_windowDragPressFrac;
+        float floor = m_windowDragFloor0 + d;
+        float ceil = m_windowDragCeil0 + d;
+        const float width = m_windowDragCeil0 - m_windowDragFloor0;
+        const float spanMax = std::max(1.0f, m_windowDragCeil0);
+        if (floor < 0.0f) {
+            floor = 0.0f;
+            ceil = width;
+        }
+        if (ceil > spanMax) {
+            ceil = spanMax;
+            floor = spanMax - width;
+        }
+        setColorWindow(floor, ceil);
+        break;
+    }
+    case ColorBarDrag::None:
+        break;
+    }
+}
+
+void SpectrumWaterfall::setColorBarHoverCursor(const QPoint &pos)
+{
+    switch (hitTestColorBar(pos)) {
+    case ColorBarDrag::Window:
+        setCursor(Qt::SizeAllCursor);
+        break;
+    case ColorBarDrag::Floor:
+    case ColorBarDrag::Ceil:
+        setCursor(Qt::SizeVerCursor);
+        break;
+    case ColorBarDrag::None:
+        break;
     }
 }
 
@@ -725,51 +812,25 @@ QRgb SpectrumWaterfall::rateToColor(float rate) const
 
 void SpectrumWaterfall::drawColorBar(QPainter &p, const QRect &plot) const
 {
+    Q_UNUSED(plot);
     const QRect bar = colorBarRect();
     if (bar.height() < 4) {
         return;
     }
 
-    // Vertical palette (top = hot / high rate, bottom = cold).
-    for (int y = 0; y < bar.height(); ++y) {
-        const float t = 1.0f - float(y) / float(std::max(1, bar.height() - 1));
-        // Sample palette at t using same gamma as rateToColor (0…1 input).
-        const float u = std::pow(t, 0.55f);
-        int r = 0, g = 0, b = 0;
-        if (u < 0.25f) {
-            const float s = u / 0.25f;
-            b = int(80 + 175 * s);
-        } else if (u < 0.5f) {
-            const float s = (u - 0.25f) / 0.25f;
-            g = int(255 * s);
-            b = 255;
-        } else if (u < 0.75f) {
-            const float s = (u - 0.5f) / 0.25f;
-            r = int(255 * s);
-            g = 255;
-            b = int(255 * (1.0f - s));
-        } else {
-            const float s = (u - 0.75f) / 0.25f;
-            r = 255;
-            g = 255;
-            b = int(255 * s);
-        }
-        p.setPen(QColor(r, g, b));
-        p.drawLine(bar.left(), bar.top() + y, bar.right(), bar.top() + y);
+    // Each row is the colour of that fraction of auto-max (matches spectrogram).
+    for (int i = 0; i < bar.height(); ++i) {
+        const int y = bar.top() + i;
+        const float frac = fracFromBarY(y);
+        p.setPen(QColor::fromRgb(rateToColor(frac * m_displayMax)));
+        p.drawLine(bar.left(), y, bar.right(), y);
     }
     p.setPen(QColor(90, 94, 100));
     p.setBrush(Qt::NoBrush);
     p.drawRect(bar);
 
-    // Markers for current floor/ceil relative to auto max (0…ceilMax span on bar).
-    auto fracToY = [&](float frac) -> int {
-        // frac 0 at bottom, 1 at top of bar (relative to 0…kColorCeilMax mapping for ceil handle)
-        const float norm = std::clamp(frac / kColorCeilMax, 0.0f, 1.0f);
-        return bar.bottom() - int(std::lround(norm * (bar.height() - 1)));
-    };
-    const int yCeil = fracToY(m_colorCeilFrac);
-    const int yFloor = fracToY(m_colorFloorFrac);
-
+    const int yCeil = yFromBarFrac(m_colorCeilFrac);
+    const int yFloor = yFromBarFrac(m_colorFloorFrac);
     p.setPen(QPen(QColor(255, 240, 180), 2));
     p.drawLine(bar.left() - 1, yCeil, bar.right() + 1, yCeil);
     if (m_colorFloorFrac > 1e-4f) {
@@ -777,14 +838,12 @@ void SpectrumWaterfall::drawColorBar(QPainter &p, const QRect &plot) const
         p.drawLine(bar.left() - 1, yFloor, bar.right() + 1, yFloor);
     }
 
-    // Scale % of auto max (top marker).
+    // Scale % of auto max (ceil).
     const QFontMetrics fm = p.fontMetrics();
     p.setPen(QColor(170, 172, 180));
     const QString pct = QStringLiteral("%1%").arg(int(std::lround(double(m_colorCeilFrac) * 100.0)));
     p.drawText(bar.left() + (bar.width() - fm.horizontalAdvance(pct)) / 2,
                bar.top() - 2, pct);
-
-    Q_UNUSED(plot);
 }
 
 bool SpectrumWaterfall::makeRow(const Snapshot &prev, const Snapshot &cur, Row *out) const
@@ -1174,11 +1233,11 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && colorBarRect().contains(event->pos())) {
         setFocus(Qt::MouseFocusReason);
         m_colorBarDragging = true;
-        // Top 55% of bar → ceil (sensitivity); bottom → floor (noise cut).
-        const QRect bar = colorBarRect();
-        m_colorBarDragFloor =
-            (event->pos().y() - bar.top()) > int(bar.height() * 0.55);
-        applyColorScaleFromBarY(event->pos().y(), m_colorBarDragFloor);
+        m_colorBarDragMode = hitTestColorBar(event->pos());
+        m_windowDragFloor0 = m_colorFloorFrac;
+        m_windowDragCeil0 = m_colorCeilFrac;
+        m_windowDragPressFrac = fracFromBarY(event->pos().y());
+        applyColorBarDrag(event->pos().y());
         grabMouse();
         event->accept();
         return;
@@ -1237,7 +1296,7 @@ void SpectrumWaterfall::mousePressEvent(QMouseEvent *event)
 void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_colorBarDragging) {
-        applyColorScaleFromBarY(event->pos().y(), m_colorBarDragFloor);
+        applyColorBarDrag(event->pos().y());
         event->accept();
         return;
     }
@@ -1290,7 +1349,7 @@ void SpectrumWaterfall::mouseMoveEvent(QMouseEvent *event)
     }
 
     if (colorBarRect().contains(event->pos())) {
-        setCursor(Qt::SizeVerCursor);
+        setColorBarHoverCursor(event->pos());
         event->accept();
         return;
     }
@@ -1303,6 +1362,7 @@ void SpectrumWaterfall::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && m_colorBarDragging) {
         m_colorBarDragging = false;
+        m_colorBarDragMode = ColorBarDrag::None;
         if (mouseGrabber() == this) {
             releaseMouse();
         }
@@ -1383,6 +1443,7 @@ void SpectrumWaterfall::mouseDoubleClickEvent(QMouseEvent *event)
             releaseMouse();
         }
         m_colorBarDragging = false;
+        m_colorBarDragMode = ColorBarDrag::None;
         m_selectDragging = false;
         m_selectMoving = false;
         m_selectResizing = false;

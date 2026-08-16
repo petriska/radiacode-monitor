@@ -346,8 +346,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_waterfallColorScaleSpin->setToolTip(
             tr("Colour scale top as %% of auto max rate over history (SDR-style).\n"
                "Lower %% = more sensitive (weak rates use more of the palette).\n"
-               "Also adjustable on the colour bar at the right of the spectrogram:\n"
-               "drag top / wheel = sensitivity, bottom = floor, double-click = reset."));
+               "On the colour bar: drag edges to set floor/ceil, drag the middle\n"
+               "to slide the window, wheel = gain, double-click to reset."));
         form->addRow(tr("Colour scale"), m_waterfallColorScaleSpin);
         lay->addLayout(form);
 
