@@ -32,6 +32,13 @@
 - **Selection extract (E2):** context menu **Spectrum from selection…** and
   **MCS from selection…** open separate live-updating dialogs (move/resize the
   box to refresh), plus **Export selection spectrum…** / **Export selection MCS CSV…**.
+- **Spectrogram time zoom:** Ctrl+wheel zooms time around the cursor (max **1:1**,
+  one row = one pixel). **Fit all** (button + context menu) shows the whole buffer;
+  **Zoom 1:1** recentres. Zoom-out bins rows with max rate (hotspots stay visible).
+  Badge shows `1:1` or the visible span (e.g. `~6 h`).
+- Load spectrogram history keeps up to **48 h** at 1 s/row (172 800 rows); no longer
+  trims to the live History combo. Files longer than the cap load the newest rows
+  and warn. Disconnect does not clear the spectrogram buffer (Reset spectrum does).
 
 ### Changed
 

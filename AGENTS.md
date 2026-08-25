@@ -88,11 +88,13 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 
 **Waterfall behaviour (important)**
 
-- Time axis is **1:1**: one history row = one screen pixel, bottom-aligned (SDR-style scroll).
-- Do **not** stretch the full row buffer to fill the pane height (that made history look “remapped”).
+- Time axis **maximum zoom is 1:1** (one history row = one screen pixel), bottom-aligned
+  (SDR-style scroll). Zoom-out uses `rowsPerPixel` max-pool so hotspots stay visible;
+  do **not** stretch rows above 1 px (that remapped history).
 - Colour scale = 0 … max rate over history; full recolour only when that max changes (~2% hysteresis).
 - **History buffer** (feature branch / post-0.3.0): minutes preset (15–240, default 120),
   wheel scroll, follow-live, per-row `wallTime`. Viewport-sized image cache only.
+  Ctrl+wheel time zoom; Fit all / Zoom 1:1.
 
 **Spectrogram I/O (feature branch)**
 
@@ -100,12 +102,14 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 - `SpectrogramRecorder` — daily `.rcsg` append; day roll → `.rcsg.gz` + keepDays prune.
 - `SpectrogramCompress` — gzip via QtZlib.
 - Save/load full buffer; continuous checkbox in Live panel.
+- Load cap **172 800** rows (48 h at 1 s/row); `m_historyCapUnlocked` after file load
+  (no trim to History combo). Incremental colour max via per-row `Row::peak`.
 
 **Still planned (“spectrogram analysis”)**
 
-- Continuous on-disk recording + seamless continue after restart
-- Rectangle select on waterfall → spectrum from X, MCS/time series from Y
 - ROI definition from waterfall selection
+- File-backed week/month timeline
+- Seamless RAM resume from today’s `.rcsg` on startup
 
 Work spectrogram features on `feature/spectrogram-history` (or successor) from `main`.
 
