@@ -74,7 +74,7 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 
 ---
 
-## Product status (as of 0.3.0)
+## Product status (as of 0.4.0)
 
 **In tree / released**
 
@@ -92,11 +92,11 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
   (SDR-style scroll). Zoom-out uses `rowsPerPixel` max-pool so hotspots stay visible;
   do **not** stretch rows above 1 px (that remapped history).
 - Colour scale = 0 … max rate over history; full recolour only when that max changes (~2% hysteresis).
-- **History buffer** (feature branch / post-0.3.0): minutes preset (15–240, default 120),
+- **History buffer**: minutes preset (15–240, default 120),
   wheel scroll, follow-live, per-row `wallTime`. Viewport-sized image cache only.
   Ctrl+wheel time zoom; Fit all / Zoom 1:1.
 
-**Spectrogram I/O (feature branch)**
+**Spectrogram I/O**
 
 - `.rcsg` binary via `src/spectrogramfile.*` — see header for layout; `AppendWriter` for continuous.
 - `SpectrogramRecorder` — daily `.rcsg` append; day roll → `.rcsg.gz` + keepDays prune.
@@ -114,7 +114,8 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 - File-backed week/month timeline
 - Seamless RAM resume from today’s `.rcsg` on startup
 
-Work spectrogram features on `feature/spectrogram-history` (or successor) from `main`.
+Post-0.4.0 spectrogram follow-ups (ROI from selection, file-backed week/month,
+startup resume) from up-to-date `main`.
 
 ---
 

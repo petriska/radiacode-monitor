@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-25
+
 ### Added
 
 - **Spectrogram history** (waterfall): keep up to **15 min … 4 h** of rate rows in RAM
@@ -69,6 +71,10 @@
   left; spectrum + spectrogram take the main area. Toggle `‹`/`›` or **View → Show
   setup panel** (`Ctrl+B`). **View → Focus spectrogram** (`F11`) hides setup and
   enlarges the waterfall. Splitter sizes and setup visibility saved in QSettings.
+
+### Notes
+
+- Library pin for this release: **qtradiacode `v0.1.3`** (unchanged from 0.3.0)
 
 ## [0.3.0] — 2026-08-10
 
