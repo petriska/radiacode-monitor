@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QImageWriter>
 #include <QKeyEvent>
 #include <QMenu>
@@ -49,6 +50,11 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
 
 void SpectrumWaterfall::recomputeCapacity()
 {
+    if (m_historyCapUnlocked) {
+        m_maxRows = kMaxRowsCap;
+        clampScroll();
+        return;
+    }
     // Each display row covers ~integrate seconds (1 s poll cadence).
     const int secPerRow = qMax(1, m_integrate);
     const int rows = int((qint64(m_historyMinutes) * 60) / secPerRow);
@@ -70,9 +76,11 @@ void SpectrumWaterfall::recomputeCapacity()
 void SpectrumWaterfall::setHistoryMinutes(int minutes)
 {
     const int m = qBound(kMinHistoryMinutes, minutes, kMaxHistoryMinutes);
-    if (m_historyMinutes == m) {
+    if (m_historyMinutes == m && !m_historyCapUnlocked) {
         return;
     }
+    // History combo is the only user trim of an unlocked (loaded) buffer.
+    m_historyCapUnlocked = false;
     m_historyMinutes = m;
     recomputeCapacity();
     rebuildViewportImage();
@@ -1236,6 +1244,9 @@ void SpectrumWaterfall::pushSpectrum(const QVector<quint32> &counts, quint32 dur
         m_viewportCount = 0;
         const bool wasFollow = (m_scrollFromNewest == 0);
         m_scrollFromNewest = 0;
+        m_historyCapUnlocked = false;
+        m_rowsPerPixel = 1.0f;
+        recomputeCapacity();
         clearCursor();
         if (m_xMax <= m_xMin || m_xMax > n) {
             m_xMin = 0;
@@ -1899,6 +1910,9 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
         return false;
     }
 
+    QWidget *boxParent = dialogParent ? dialogParent : this;
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+
     QString loadPath = path;
     QString tempUnpacked;
     if (path.endsWith(QStringLiteral(".gz"), Qt::CaseInsensitive)) {
@@ -1907,7 +1921,8 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
                 .arg(QDateTime::currentMSecsSinceEpoch()));
         QString err;
         if (!SpectrogramCompress::gunzipFile(path, tempUnpacked, &err)) {
-            QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
+            QGuiApplication::restoreOverrideCursor();
+            QMessageBox::warning(boxParent, tr("Load history"),
                                  tr("Failed to decompress:\n%1").arg(err));
             return false;
         }
@@ -1921,17 +1936,20 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
         QFile::remove(tempUnpacked);
     }
     if (!ok) {
-        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
+        QGuiApplication::restoreOverrideCursor();
+        QMessageBox::warning(boxParent, tr("Load history"),
                              tr("Failed to load:\n%1").arg(err));
         return false;
     }
     if (doc.rows.isEmpty() || doc.nChannels == 0) {
-        QMessageBox::warning(dialogParent ? dialogParent : this, tr("Load history"),
+        QGuiApplication::restoreOverrideCursor();
+        QMessageBox::warning(boxParent, tr("Load history"),
                              tr("File contains no spectrogram rows."));
         return false;
     }
 
     // Replace in-memory history (live acquisition can continue after a new baseline).
+    // Do not recomputeCapacity() from file minutes — that would trim before unlock.
     m_rows.clear();
     m_channels = int(doc.nChannels);
     m_a0 = doc.a0;
@@ -1939,30 +1957,35 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     m_a2 = doc.a2;
     m_integrate = qBound(1, int(doc.integrate), kMaxIntegrate);
     m_historyMinutes = qBound(kMinHistoryMinutes, int(doc.historyMinutes), kMaxHistoryMinutes);
-    recomputeCapacity();
     if (!doc.serial.isEmpty()) {
         m_deviceSerial = doc.serial;
     }
 
-    m_rows.reserve(doc.rows.size());
-    for (const SpectrogramFile::Row &r : doc.rows) {
+    const int nDoc = doc.rows.size();
+    const int start = (nDoc > kMaxRowsCap) ? (nDoc - kMaxRowsCap) : 0;
+    const int nKeep = nDoc - start;
+
+    m_historyCapUnlocked = true;
+    m_maxRows = kMaxRowsCap;
+
+    m_rows.reserve(nKeep);
+    for (int i = start; i < nDoc; ++i) {
+        const SpectrogramFile::Row &r = doc.rows.at(i);
         Row row;
         row.rates = r.rates;
         row.deltas = r.deltas;
         row.liveTimeSec = r.liveTimeSec;
         row.intervalSec = r.intervalSec;
         row.wallTime = r.wallTime;
+        row.peak = rowPeakValue(row);
         m_rows.append(std::move(row));
-    }
-    while (m_rows.size() > m_maxRows) {
-        m_rows.removeFirst();
     }
 
     m_hasBaseline = false;
     m_baseline = Snapshot{};
     m_integrateProgress = 0;
     m_scrollFromNewest = 0;
-    recomputeAllRowPeaks(); // sets each Row::peak (required before maxOfRowPeaks)
+    m_displayMax = maxOfRowPeaks();
     m_xMin = 0;
     m_xMax = m_channels;
     m_viewportFirstRow = -1;
@@ -1970,10 +1993,11 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     m_image = QImage();
     clearCursor();
 
-    rebuildViewportImage();
+    fitAll(); // includes rebuild + follow-live scroll 0
     emit followLiveChanged(true);
     emitScrollSignals();
-    update();
+
+    QGuiApplication::restoreOverrideCursor();
 
     QString calLine;
     if (hasEnergyCalibration()) {
@@ -1988,11 +2012,20 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
         calLine += tr("\nSerial: %1").arg(m_deviceSerial);
     }
 
+    QString rowLine;
+    if (nDoc > kMaxRowsCap) {
+        rowLine = tr("Loaded %1 of %2 rows (limit 48 h at 1 s/row).")
+                      .arg(nKeep)
+                      .arg(nDoc);
+    } else {
+        rowLine = tr("Loaded %1 rows").arg(m_rows.size());
+    }
+
     QMessageBox::information(
-        dialogParent ? dialogParent : this,
+        boxParent,
         tr("Load history"),
-        tr("Loaded %1 rows (%2 channels) from\n%3%4")
-            .arg(m_rows.size())
+        tr("%1 (%2 channels) from\n%3%4")
+            .arg(rowLine)
             .arg(m_channels)
             .arg(QFileInfo(path).fileName())
             .arg(calLine));

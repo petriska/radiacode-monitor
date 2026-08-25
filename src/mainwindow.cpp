@@ -1805,10 +1805,6 @@ void MainWindow::onDisconnected()
     if (m_spectrogramRecorder) {
         m_spectrogramRecorder->stop();
     }
-    if (m_waterfall) {
-        m_waterfall->setDeviceSerial(QString());
-        m_waterfall->clear();
-    }
     m_hasSpectrum = false;
     m_lastSpectrum = {};
     appendLog(tr("Disconnected"));
