@@ -336,7 +336,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_waterfallHistoryCombo->setToolTip(
             tr("How much spectrogram history to keep in memory.\n"
                "Row count ≈ minutes × 60 / integrate (1 s polls).\n"
-               "Wheel over the waterfall scrolls history; double-click returns to live."));
+               "Wheel over the waterfall scrolls history; double-click returns to live.\n"
+               "After loading a long .rcsg, this preset is ignored until Reset spectrum."));
         form->addRow(tr("History"), m_waterfallHistoryCombo);
 
         m_waterfallColorScaleSpin = new QSpinBox(box);
@@ -358,6 +359,7 @@ MainWindow::MainWindow(QWidget *parent)
         lay->addWidget(m_waterfallLiveBtn);
 
         m_waterfallFitAllBtn = new QPushButton(tr("Fit all"), box);
+        m_waterfallFitAllBtn->setEnabled(false);
         m_waterfallFitAllBtn->setToolTip(
             tr("Show the entire spectrogram history in the pane (time zoom-out).\n"
                "Ctrl+wheel zooms toward 1:1 (one row = one pixel)."));
@@ -679,6 +681,10 @@ MainWindow::MainWindow(QWidget *parent)
             m_waterfallLiveBtn->setEnabled(!following);
         }
     });
+    connect(m_waterfall, &SpectrumWaterfall::historyCapUnlockedChanged, this,
+            [this](bool) { syncWaterfallHistoryUi(); });
+    connect(m_waterfall, &SpectrumWaterfall::rowCountChanged, this,
+            [this](int) { syncWaterfallHistoryUi(); });
     connect(m_recordSpectrogramCheck, &QCheckBox::toggled, this, [this](bool on) {
         QSettings().setValue(QStringLiteral("waterfall/recordContinuous"), on);
         syncSpectrogramRecording();
@@ -837,6 +843,7 @@ MainWindow::MainWindow(QWidget *parent)
             m_waterfall->setHistoryMinutes(
                 m_waterfallHistoryCombo ? m_waterfallHistoryCombo->currentData().toInt()
                                         : 120);
+            syncWaterfallHistoryUi();
         }
         const bool rec =
             settings.value(QStringLiteral("waterfall/recordContinuous"), false).toBool();
@@ -1734,7 +1741,17 @@ void MainWindow::onConnected()
                            ? QStringLiteral("—")
                            : m_device->firmwareVersion());
     if (m_waterfall) {
-        m_waterfall->setDeviceSerial(m_device->serialNumber());
+        const QString serial = m_device->serialNumber().trimmed();
+        const QString prev = m_waterfall->deviceSerial();
+        // Conservative: wipe only when both serials are known and they differ.
+        if (!prev.isEmpty() && !serial.isEmpty() && prev != serial) {
+            m_waterfall->clear();
+            if (m_hasBackground) {
+                m_waterfall->setBackground(m_backgroundSpectrum.counts,
+                                           m_backgroundSpectrum.durationSec);
+            }
+        }
+        m_waterfall->setDeviceSerial(serial);
     }
     syncSpectrogramRecording();
     m_statusLabel->setText(tr("Connected"));
@@ -1802,6 +1819,9 @@ void MainWindow::onDisconnected()
     m_serialLabel->setText(QStringLiteral("—"));
     m_fwLabel->setText(QStringLiteral("—"));
     m_spectrum->clear();
+    if (m_waterfall) {
+        m_waterfall->invalidateBaseline();
+    }
     if (m_spectrogramRecorder) {
         m_spectrogramRecorder->stop();
     }
@@ -1809,6 +1829,19 @@ void MainWindow::onDisconnected()
     m_lastSpectrum = {};
     appendLog(tr("Disconnected"));
     refreshDeviceList();
+}
+
+void MainWindow::syncWaterfallHistoryUi()
+{
+    if (!m_waterfall) {
+        return;
+    }
+    if (m_waterfallHistoryCombo) {
+        m_waterfallHistoryCombo->setEnabled(!m_waterfall->historyCapUnlocked());
+    }
+    if (m_waterfallFitAllBtn) {
+        m_waterfallFitAllBtn->setEnabled(m_waterfall->rowCount() > 0);
+    }
 }
 
 void MainWindow::onError(const QString &message)

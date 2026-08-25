@@ -80,7 +80,7 @@ void SpectrumWaterfall::setHistoryMinutes(int minutes)
         return;
     }
     // History combo is the only user trim of an unlocked (loaded) buffer.
-    m_historyCapUnlocked = false;
+    setHistoryCapUnlocked(false);
     m_historyMinutes = m;
     recomputeCapacity();
     rebuildViewportImage();
@@ -131,6 +131,7 @@ void SpectrumWaterfall::goToOldest()
 void SpectrumWaterfall::setRowsPerPixel(float rpp, int anchorRow, int anchorWidgetY)
 {
     const float before = m_rowsPerPixel;
+    const int beforeScroll = m_scrollFromNewest;
     m_rowsPerPixel = rpp;
     clampRowsPerPixel();
 
@@ -156,6 +157,9 @@ void SpectrumWaterfall::setRowsPerPixel(float rpp, int anchorRow, int anchorWidg
     }
     rebuildViewportImage();
     emitScrollSignals();
+    if ((beforeScroll == 0) != (m_scrollFromNewest == 0)) {
+        emit followLiveChanged(m_scrollFromNewest == 0);
+    }
     update();
 }
 
@@ -164,12 +168,16 @@ void SpectrumWaterfall::fitAll()
     if (m_rows.isEmpty()) {
         return;
     }
+    const bool wasFollow = (m_scrollFromNewest == 0);
     m_rowsPerPixel = maxRowsPerPixel();
     m_scrollFromNewest = 0;
     clampRowsPerPixel();
     clampScroll();
     rebuildViewportImage();
     emitScrollSignals();
+    if (!wasFollow) {
+        emit followLiveChanged(true);
+    }
     update();
 }
 
@@ -279,7 +287,7 @@ void SpectrumWaterfall::clear()
     const bool wasFollow = (m_scrollFromNewest == 0);
     m_scrollFromNewest = 0;
     m_rowsPerPixel = 1.0f;
-    m_historyCapUnlocked = false;
+    setHistoryCapUnlocked(false);
     recomputeCapacity();
     m_linkedCh = -1;
     m_selectDragging = false;
@@ -293,7 +301,24 @@ void SpectrumWaterfall::clear()
         emit followLiveChanged(true);
     }
     emitScrollSignals();
+    emit rowCountChanged(0);
     update();
+}
+
+void SpectrumWaterfall::invalidateBaseline()
+{
+    m_hasBaseline = false;
+    m_baseline = Snapshot{};
+    m_integrateProgress = 0;
+}
+
+void SpectrumWaterfall::setHistoryCapUnlocked(bool unlocked)
+{
+    if (m_historyCapUnlocked == unlocked) {
+        return;
+    }
+    m_historyCapUnlocked = unlocked;
+    emit historyCapUnlockedChanged(unlocked);
 }
 
 void SpectrumWaterfall::clearSelection()
@@ -1109,6 +1134,7 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
 {
     const bool wasFollow = (m_scrollFromNewest == 0);
     const bool droppedOldest = (m_rows.size() >= m_maxRows);
+    const bool wasEmpty = m_rows.isEmpty();
 
     // Continuous disk recording (C1) — same row model as .rcsg save/load.
     if (m_recorder && m_recorder->isRecording()) {
@@ -1134,6 +1160,9 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
     }
     if (dropped > 0) {
         adjustSelectionAfterHistoryTrim(dropped);
+    }
+    if (wasEmpty) {
+        emit rowCountChanged(m_rows.size());
     }
 
     // Keep the same absolute window when the user has scrolled into history.
@@ -1171,14 +1200,19 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
 
     m_displayMax = newMax;
 
-    // Zoomed-out live follow: only recompute the last (newest) image bin.
+    // Zoomed-out live follow: last image bin only if firstRow is unchanged.
+    // When firstRow advances the whole viewport is stale (Fit all + live).
     if (m_rowsPerPixel > 1.0001f && wasFollow && !scaleChanged) {
         TimeView tv;
         if (timeView(plotRect(), &tv) && !m_image.isNull()
             && m_image.height() == tv.visible && m_image.width() == m_channels) {
-            paintImageRow(tv.visible - 1, tv);
-            m_viewportFirstRow = tv.firstRow;
-            m_viewportCount = tv.visible;
+            if (tv.firstRow != m_viewportFirstRow) {
+                rebuildViewportImage();
+            } else {
+                paintImageRow(tv.visible - 1, tv);
+                m_viewportFirstRow = tv.firstRow;
+                m_viewportCount = tv.visible;
+            }
             refreshCursorAfterScroll(droppedOldest);
             emitScrollSignals();
             update();
@@ -1244,9 +1278,10 @@ void SpectrumWaterfall::pushSpectrum(const QVector<quint32> &counts, quint32 dur
         m_viewportCount = 0;
         const bool wasFollow = (m_scrollFromNewest == 0);
         m_scrollFromNewest = 0;
-        m_historyCapUnlocked = false;
+        setHistoryCapUnlocked(false);
         m_rowsPerPixel = 1.0f;
         recomputeCapacity();
+        clearSelection();
         clearCursor();
         if (m_xMax <= m_xMin || m_xMax > n) {
             m_xMin = 0;
@@ -1255,6 +1290,7 @@ void SpectrumWaterfall::pushSpectrum(const QVector<quint32> &counts, quint32 dur
         if (!wasFollow) {
             emit followLiveChanged(true);
         }
+        emit rowCountChanged(0);
     }
 
     Snapshot cur;
@@ -1950,6 +1986,7 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
 
     // Replace in-memory history (live acquisition can continue after a new baseline).
     // Do not recomputeCapacity() from file minutes — that would trim before unlock.
+    clearSelection();
     m_rows.clear();
     m_channels = int(doc.nChannels);
     m_a0 = doc.a0;
@@ -1965,7 +2002,7 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     const int start = (nDoc > kMaxRowsCap) ? (nDoc - kMaxRowsCap) : 0;
     const int nKeep = nDoc - start;
 
-    m_historyCapUnlocked = true;
+    setHistoryCapUnlocked(true);
     m_maxRows = kMaxRowsCap;
 
     m_rows.reserve(nKeep);
@@ -1996,6 +2033,7 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     fitAll(); // includes rebuild + follow-live scroll 0
     emit followLiveChanged(true);
     emitScrollSignals();
+    emit rowCountChanged(m_rows.size());
 
     QGuiApplication::restoreOverrideCursor();
 
@@ -2014,7 +2052,7 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
 
     QString rowLine;
     if (nDoc > kMaxRowsCap) {
-        rowLine = tr("Loaded %1 of %2 rows (limit 48 h at 1 s/row).")
+        rowLine = tr("Loaded %1 of %2 rows (limit 48 h at 1 s/row)")
                       .arg(nKeep)
                       .arg(nDoc);
     } else {
@@ -2024,7 +2062,7 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     QMessageBox::information(
         boxParent,
         tr("Load history"),
-        tr("%1 (%2 channels) from\n%3%4")
+        tr("%1. %2 channels.\nFrom %3%4")
             .arg(rowLine)
             .arg(m_channels)
             .arg(QFileInfo(path).fileName())
@@ -2169,17 +2207,27 @@ bool SpectrumWaterfall::exportAsPng(PngExportScope scope, QWidget *dialogParent)
 
     // Large images (full history, or View after Fit all): confirm when height is big.
     if (nRows >= 2000) {
+        const QString body = (scope == PngExportScope::FullHistory)
+            ? tr("The history buffer has %1 rows × %2 channels.\n"
+                 "The PNG will be about %3×%4 pixels and may take a moment.\n\n"
+                 "Continue?")
+                  .arg(nRows)
+                  .arg(ch1 - ch0)
+                  .arg(ch1 - ch0)
+                  .arg(nRows)
+            : tr("This view is %1 rows × %2 channels (of %3 rows in the buffer).\n"
+                 "The PNG will be about %4×%5 pixels and may take a moment.\n\n"
+                 "Continue?")
+                  .arg(nRows)
+                  .arg(ch1 - ch0)
+                  .arg(m_rows.size())
+                  .arg(ch1 - ch0)
+                  .arg(nRows);
         const auto ans = QMessageBox::question(
             dialogParent ? dialogParent : this,
             scope == PngExportScope::FullHistory ? tr("Export full history as PNG")
                                                  : tr("Export spectrogram view as PNG"),
-            tr("The history buffer has %1 rows × %2 channels.\n"
-               "The PNG will be about %3×%4 pixels and may take a moment.\n\n"
-               "Continue?")
-                .arg(nRows)
-                .arg(ch1 - ch0)
-                .arg(ch1 - ch0)
-                .arg(nRows),
+            body,
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::Yes);
         if (ans != QMessageBox::Yes) {
@@ -2280,9 +2328,14 @@ void SpectrumWaterfall::wheelEvent(QWheelEvent *event)
 void SpectrumWaterfall::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    const int beforeScroll = m_scrollFromNewest;
+    clampRowsPerPixel();
     clampScroll();
     rebuildViewportImage();
     emitScrollSignals();
+    if ((beforeScroll == 0) != (m_scrollFromNewest == 0)) {
+        emit followLiveChanged(m_scrollFromNewest == 0);
+    }
     update();
 }
 
@@ -2331,8 +2384,8 @@ void SpectrumWaterfall::drawCursor(QPainter &p, const QRect &plot) const
     if (hover) {
         TimeView tv;
         if (timeView(plot, &tv) && m_cursorRow >= tv.firstRow
-            && m_cursorRow < tv.firstRow + tv.visible) {
-            y = tv.dest.top() + (m_cursorRow - tv.firstRow);
+            && m_cursorRow <= tv.lastRow) {
+            y = rowToWidgetY(m_cursorRow, tv);
             p.drawLine(plot.left(), y, plot.right(), y);
         }
     }

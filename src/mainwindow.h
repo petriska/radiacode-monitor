@@ -105,6 +105,7 @@ private:
     void clearAcquisitionSpectrumHold();
     void updateBackgroundUi();
     void refreshSpectrumDisplay();
+    void syncWaterfallHistoryUi();
     /// Spectrum currently shown / saved (live, stored BG, or net).
     QtRadiacode::RcSpectrum spectrumForView() const;
     static QtRadiacode::RcSpectrum computeNetSpectrum(const QtRadiacode::RcSpectrum &sample,

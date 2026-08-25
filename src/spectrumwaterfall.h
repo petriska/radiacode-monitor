@@ -12,8 +12,9 @@ class SpectrogramRecorder;
 //
 // History: ring of rate rows (ΔN/Δt) with wall-clock timestamps. Capacity is
 // set in minutes (default 2 h) and grows with integrate coarseness.
-// Display: 1:1 time (one row = one pixel), bottom-aligned; wheel scrolls
-// through history. scrollFromNewest==0 follows live data.
+// Display: maximum time zoom is 1:1 (one row = one pixel), bottom-aligned;
+// zoom-out bins rows with max-pool (rowsPerPixel ≥ 1). Wheel scrolls history.
+// scrollFromNewest==0 follows live data.
 // Colour map = [floor, ceil] within auto max over history; recolour when max moves (~2%).
 // Right-hand SDR-style colour bar: drag / wheel to scale the mapped range (highlight weak rates).
 // Net view adjusts live rates by BG rate at paint time (no full snap history).
@@ -54,6 +55,8 @@ public:
     int historyMinutes() const { return m_historyMinutes; }
     int maxRows() const { return m_maxRows; }
     int rowCount() const { return m_rows.size(); }
+    /// True after loading a long .rcsg: live History combo must not trim the buffer.
+    bool historyCapUnlocked() const { return m_historyCapUnlocked; }
 
     /// 0 = follow newest (live). Larger = look further into the past.
     void setScrollFromNewest(int rows);
@@ -133,6 +136,8 @@ public:
     QVector<SelectionMcsPoint> extractSelectionMcs() const;
 
     void clear();
+    /// Drop the live ΔN baseline without wiping history (call on disconnect).
+    void invalidateBaseline();
 
     /// Vertical highlight linked from spectrum hover (−1 = none). Does not emit signals.
     void setLinkedChannel(int channel);
@@ -143,6 +148,8 @@ signals:
                            quint32 liveTimeSec, int ageFromNewestSec);
     void followLiveChanged(bool following);
     void scrollChanged(int scrollFromNewest, int maxScroll);
+    void historyCapUnlockedChanged(bool unlocked);
+    void rowCountChanged(int rows);
     /// Colour scale floor/ceil fractions changed (UI sync).
     void colorScaleChanged(float floorFrac, float ceilFrac);
     /// Emitted when the analysis rectangle is set, cleared, or adjusted after history trim.
@@ -180,7 +187,7 @@ private:
         float peak = 0.0f;          // max displayRate on this row (current Live/Net)
     };
 
-    /// 1:1 bottom-aligned time view into the history buffer.
+    /// Visible time window: 1:1 is bottom-aligned; rpp>1 fills dest with max-pooled bins.
     struct TimeView {
         QRect imgRect;
         QRect dest;
@@ -237,6 +244,7 @@ private:
     int binFirstRow(int pixelY, const TimeView &tv) const;
     int binLastRowExclusive(int pixelY, const TimeView &tv) const;
     void clampRowsPerPixel();
+    void setHistoryCapUnlocked(bool unlocked);
     /// Bit flags: Left=1 Right=2 Top=4 Bottom=8; 0 = none / inside handled separately.
     int hitTestSelectionEdge(const QPoint &pos) const;
     void applySelectionHoverCursor(const QPoint &pos);

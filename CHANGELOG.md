@@ -40,6 +40,16 @@
   trims to the live History combo. Files longer than the cap load the newest rows
   and warn. Disconnect does not clear the spectrogram buffer (Reset spectrum does).
 
+### Fixed
+
+- Spectrogram crosshair Y follows time zoom (`rowToWidgetY`), not 1:1 pixel rows.
+- **Fit all** / Ctrl+wheel emit **Follow live** so the button matches the viewport.
+- Growing the spectrogram pane after Fit all reclamps `rowsPerPixel`.
+- Load history and channel-count change clear a stale analysis selection.
+- Disconnect drops the live ΔN baseline without wiping spectrogram history.
+- History combo is disabled after loading a long `.rcsg` (until **Reset spectrum**).
+- Zoomed-out live follow rebuilds the viewport when the first visible row advances.
+
 ### Changed
 
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer

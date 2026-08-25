@@ -103,7 +103,10 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 - `SpectrogramCompress` — gzip via QtZlib.
 - Save/load full buffer; continuous checkbox in Live panel.
 - Load cap **172 800** rows (48 h at 1 s/row); `m_historyCapUnlocked` after file load
-  (no trim to History combo). Incremental colour max via per-row `Row::peak`.
+  (no trim to History combo; combo is disabled until Reset spectrum). Incremental
+  colour max via per-row `Row::peak`. Disconnect invalidates the live ΔN baseline
+  without `waterfall->clear()`. Zoomed-out live follow last-line-only when
+  `firstRow` is stable; full viewport rebuild when `firstRow` advances.
 
 **Still planned (“spectrogram analysis”)**
 
