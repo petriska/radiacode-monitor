@@ -1266,11 +1266,7 @@ int SpectrumWaterfall::rowAtPlotY(int y, const QRect &plot) const
     if (y < tv.dest.top() || y > tv.dest.bottom()) {
         return -1;
     }
-    const int local = y - tv.dest.top();
-    if (local < 0 || local >= tv.visible) {
-        return -1;
-    }
-    return tv.firstRow + local;
+    return rowFromWidgetY(y, tv);
 }
 
 void SpectrumWaterfall::clearCursor()
@@ -1701,9 +1697,14 @@ QRect SpectrumWaterfall::selectionPixelRect(const TimeView &tv) const
     };
     const int left = channelToX(double(ch0));
     const int right = channelToX(double(ch1));
-    const int top = tv.dest.top() + (row0 - tv.firstRow);
-    const int bottom = tv.dest.top() + (row1 - tv.firstRow);
-    return QRect(QPoint(qMin(left, right), top), QPoint(qMax(left, right), bottom)).normalized();
+    const int top = rowToWidgetY(row0, tv);
+    const int bottom = rowToWidgetY(row1, tv);
+    const int x0p = qMin(left, right);
+    const int x1p = qMax(left, right);
+    if (top == bottom) {
+        return QRect(QPoint(x0p, top), QSize(x1p - x0p + 1, 1));
+    }
+    return QRect(QPoint(x0p, top), QPoint(x1p, bottom)).normalized();
 }
 
 void SpectrumWaterfall::drawSelection(QPainter &p, const QRect &plot) const
