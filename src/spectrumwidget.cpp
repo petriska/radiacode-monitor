@@ -151,6 +151,18 @@ void SpectrumWidget::resetView()
     update();
 }
 
+void SpectrumWidget::setViewRange(double xMin, double xMax)
+{
+    if (channelCount() <= 0) {
+        return;
+    }
+    m_xMin = xMin;
+    m_xMax = xMax;
+    clampView();
+    emitViewRange();
+    update();
+}
+
 int SpectrumWidget::channelCount() const
 {
     return m_counts.size();

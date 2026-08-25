@@ -528,6 +528,12 @@ MainWindow::MainWindow(QWidget *parent)
             refreshSelectionMcsDialog();
         }
     });
+    connect(m_waterfall, &SpectrumWaterfall::energyViewRequested, this,
+            [this](double xMin, double xMax) {
+        if (m_spectrum) {
+            m_spectrum->setViewRange(xMin, xMax);
+        }
+    });
     connect(m_waterfall, &SpectrumWaterfall::extractSpectrumRequested, this,
             &MainWindow::onExtractSelectionSpectrum);
     connect(m_waterfall, &SpectrumWaterfall::extractMcsRequested, this,

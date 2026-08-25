@@ -105,7 +105,7 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
         "Drag inside selection: move the box · drag edges/corners: resize.\n"
         "Esc / click outside / right-click → Clear selection.\n"
         "Mouse wheel: scroll history · Double-click: jump to live.\n"
-        "Ctrl+wheel: zoom time (max 1:1) · Fit all / Zoom 1:1 in the menu.\n"
+        "Ctrl+wheel: zoom time (max 1:1) · Fit all / Zoom 1:1 / Zoom to selection in the menu.\n"
         "Colour bar (right): drag top = sensitivity (ceil), bottom = floor;\n"
         "wheel over bar = scale; double-click bar = reset to auto 0…max.\n"
         "Right-click menu: Follow live, Go to oldest, PNG, Save/Load history.\n"
@@ -259,6 +259,37 @@ void SpectrumWaterfall::zoomOneToOne()
         anchorRow = rowFromWidgetY(anchorY, tv);
     }
     setRowsPerPixel(1.0f, anchorRow, anchorY);
+}
+
+void SpectrumWaterfall::zoomToSelection()
+{
+    if (!m_selection.valid || m_rows.isEmpty() || m_channels <= 0) {
+        return;
+    }
+
+    const int r0 = qBound(0, m_selection.row0, m_rows.size() - 1);
+    const int r1 = qBound(r0, m_selection.row1, m_rows.size() - 1);
+    const int nSel = r1 - r0 + 1;
+    const QRect imgRect = plotRect().adjusted(1, 1, -1, -1);
+    const int plotH = qMax(1, imgRect.height());
+
+    const bool wasFollow = (m_scrollFromNewest == 0);
+    m_rowsPerPixel = (nSel <= plotH) ? 1.0f : (float(nSel) / float(plotH));
+    clampRowsPerPixel();
+    // Newest edge of the box at the bottom of the view (same scroll formula as Fit all).
+    m_scrollFromNewest = m_rows.size() - 1 - r1;
+    clampScroll();
+    rebuildViewportImage();
+    emitScrollSignals();
+    if (wasFollow != (m_scrollFromNewest == 0)) {
+        emit followLiveChanged(m_scrollFromNewest == 0);
+    }
+
+    const double x0 = double(qBound(0, m_selection.ch0, m_channels));
+    const double x1 = double(qBound(int(x0) + 1, m_selection.ch1, m_channels));
+    setViewRange(x0, x1);
+    emit energyViewRequested(x0, x1);
+    update();
 }
 
 void SpectrumWaterfall::setDeviceSerial(const QString &serial)
@@ -1803,6 +1834,12 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
 
     menu.addSeparator();
 
+    QAction *zoomSelAct = menu.addAction(tr("Zoom to selection"));
+    zoomSelAct->setEnabled(m_selection.valid);
+    zoomSelAct->setToolTip(
+        tr("Fill the spectrogram with the selected time × energy region.\n"
+           "Time zoom is at most 1:1 (one row = one pixel). Spectrum X follows."));
+
     QAction *specAct = menu.addAction(tr("Spectrum from selection…"));
     specAct->setEnabled(m_selection.valid);
     specAct->setToolTip(
@@ -1861,6 +1898,8 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         clearSelection();
     } else if (chosen == resetColorAct) {
         resetColorScale();
+    } else if (chosen == zoomSelAct) {
+        zoomToSelection();
     } else if (chosen == specAct) {
         emit extractSpectrumRequested();
     } else if (chosen == mcsAct) {

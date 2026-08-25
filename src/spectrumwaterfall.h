@@ -75,6 +75,8 @@ public:
     float maxRowsPerPixel() const;
     void fitAll();
     void zoomOneToOne();
+    /// Time-zoom so the selection rows fill the pane (max 1:1); X range follows the box.
+    void zoomToSelection();
 
     /// Colour scale: map rates in [floor, ceil] × autoMax onto the palette (SDR-style).
     /// ceilFraction 0.02…2.0 (1.0 = full auto max; lower = more sensitive / “gain”).
@@ -164,6 +166,8 @@ signals:
     void selectionChanged(bool hasSelection, int ch0, int ch1, int row0, int row1);
     void extractSpectrumRequested();
     void extractMcsRequested();
+    /// Energy axis of the spectrum plot should match the selection (channel [xMin, xMax)).
+    void energyViewRequested(double xMin, double xMax);
     void exportSelectionSpectrumRequested();
     void exportSelectionMcsRequested();
 

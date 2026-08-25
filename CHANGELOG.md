@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Waterfall context menu **Zoom to selection** — time-zoom the box into the pane
+  (max 1:1) and match the spectrum energy range.
+
 ## [0.4.0] — 2026-08-25
 
 ### Added

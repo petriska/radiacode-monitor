@@ -31,6 +31,8 @@ public:
     bool logYScale() const { return m_logY; }
     void clear();
     void resetView();
+    /// Visible channel range [xMin, xMax). Clamped; emits viewRangeChanged.
+    void setViewRange(double xMin, double xMax);
 
     double viewXMin() const { return m_xMin; }
     double viewXMax() const { return m_xMax; }
