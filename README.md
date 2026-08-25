@@ -71,11 +71,11 @@ via FetchContent (`QTRADIACODE_GIT_TAG`, default `v0.1.3` — needs network + gi
 ```text
 parent/
   qtradiacode/              # or: qtradiacode-0.1.3  (auto-detected)
-  radiacode-monitor-0.4.0/  # extracted app sources
+  radiacode-monitor-0.4.1/  # extracted app sources
 ```
 
 ```bash
-cd radiacode-monitor-0.4.0   # extracted app folder
+cd radiacode-monitor-0.4.1   # extracted app folder
 mkdir build && cd build
 cmake .. -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x
 # if auto-detect fails:
@@ -115,7 +115,7 @@ After a **Release** build (shared `QtRadiacode.dll` + `libusb-1.0.dll` next to t
 .\scripts\package-windows.ps1 `
   -BuildBinDir .\build\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\bin `
   -QtDir M:\Qt\6.11.1\msvc2022_64 `
-  -Version 0.4.0   # optional; omit to use CMakeLists.txt
+  -Version 0.4.1   # optional; omit to use CMakeLists.txt
 ```
 
 This will:
@@ -187,7 +187,7 @@ sudo apt install build-essential cmake ninja-build \
 ./scripts/package-deb.sh
 # optional:
 # ./scripts/package-deb.sh --clean
-# ./scripts/package-deb.sh --build-dir build-deb --version 0.4.0
+# ./scripts/package-deb.sh --build-dir build-deb --version 0.4.1
 ```
 
 Output: **`dist/radiacode-monitor_<version>_<arch>.deb`**

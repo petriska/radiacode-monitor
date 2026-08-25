@@ -74,7 +74,7 @@ Poll loop lives in `MainWindow` (~1 s USB; BLE cadence differs). Spectrum pushes
 
 ---
 
-## Product status (as of 0.4.0)
+## Product status (as of 0.4.1)
 
 **In tree / released**
 

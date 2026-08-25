@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-08-25
+
 ### Added
 
 - Waterfall context menu **Zoom to selection** — time-zoom the box into the pane
@@ -13,6 +15,10 @@
 
 - Double-click on an empty spectrum no longer zooms the spectrogram to one
   channel (full-width horizontal stripes). It restores the full energy range.
+
+### Notes
+
+- Library pin: **qtradiacode `v0.1.3`** (unchanged from 0.4.0)
 
 ## [0.4.0] — 2026-08-25
 
