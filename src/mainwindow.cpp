@@ -357,6 +357,12 @@ MainWindow::MainWindow(QWidget *parent)
             tr("Jump the spectrogram viewport to the newest data (also: double-click waterfall)."));
         lay->addWidget(m_waterfallLiveBtn);
 
+        m_waterfallFitAllBtn = new QPushButton(tr("Fit all"), box);
+        m_waterfallFitAllBtn->setToolTip(
+            tr("Show the entire spectrogram history in the pane (time zoom-out).\n"
+               "Ctrl+wheel zooms toward 1:1 (one row = one pixel)."));
+        lay->addWidget(m_waterfallFitAllBtn);
+
         m_recordSpectrogramCheck = new QCheckBox(tr("Record continuously"), box);
         m_recordSpectrogramCheck->setToolTip(
             tr("Append every spectrogram row to a daily .rcsg file on disk\n"
@@ -661,6 +667,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_waterfallLiveBtn, &QPushButton::clicked, this, [this] {
         if (m_waterfall) {
             m_waterfall->followLive();
+        }
+    });
+    connect(m_waterfallFitAllBtn, &QPushButton::clicked, this, [this] {
+        if (m_waterfall) {
+            m_waterfall->fitAll();
         }
     });
     connect(m_waterfall, &SpectrumWaterfall::followLiveChanged, this, [this](bool following) {

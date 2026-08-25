@@ -1573,6 +1573,15 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
     oldestAct->setToolTip(
         tr("Show the oldest data still in the history buffer."));
 
+    QAction *fitAllAct = menu.addAction(tr("Fit all"));
+    fitAllAct->setEnabled(!m_rows.isEmpty());
+    fitAllAct->setToolTip(tr("Show the entire history buffer in the pane (time zoom-out).\n"
+                             "Maximum zoom-in stays 1 row = 1 pixel."));
+
+    QAction *oneToOneAct = menu.addAction(tr("Zoom 1:1"));
+    oneToOneAct->setEnabled(!m_rows.isEmpty() && m_rowsPerPixel > 1.0001f);
+    oneToOneAct->setToolTip(tr("One history row = one screen pixel. Centres on the current view."));
+
     QAction *clearSelAct = menu.addAction(tr("Clear selection"));
     clearSelAct->setEnabled(m_selection.valid);
     clearSelAct->setToolTip(tr("Remove the analysis rectangle (Esc)."));
@@ -1634,6 +1643,10 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         followLive();
     } else if (chosen == oldestAct) {
         goToOldest();
+    } else if (chosen == fitAllAct) {
+        fitAll();
+    } else if (chosen == oneToOneAct) {
+        zoomOneToOne();
     } else if (chosen == clearSelAct) {
         clearSelection();
     } else if (chosen == resetColorAct) {
@@ -2155,6 +2168,23 @@ void SpectrumWaterfall::wheelEvent(QWheelEvent *event)
     if (colorBarRect().contains(event->position().toPoint())) {
         const float factor = (delta > 0) ? 0.85f : (1.0f / 0.85f);
         setColorCeilFraction(m_colorCeilFrac * factor);
+        event->accept();
+        return;
+    }
+
+    if (event->modifiers() & Qt::ControlModifier) {
+        if (m_rows.isEmpty()) {
+            event->ignore();
+            return;
+        }
+        TimeView tv;
+        const QPoint pos = event->position().toPoint();
+        int anchorRow = -1;
+        if (timeView(plotRect(), &tv)) {
+            anchorRow = rowFromWidgetY(pos.y(), tv);
+        }
+        const float factor = (delta > 0) ? (1.0f / 1.25f) : 1.25f;
+        setRowsPerPixel(m_rowsPerPixel * factor, anchorRow, pos.y());
         event->accept();
         return;
     }
