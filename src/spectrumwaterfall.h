@@ -63,6 +63,12 @@ public:
     /// Jump viewport to the oldest data still in the history buffer.
     void goToOldest();
 
+    void setRowsPerPixel(float rpp, int anchorRow = -1, int anchorWidgetY = -1);
+    float rowsPerPixel() const { return m_rowsPerPixel; }
+    float maxRowsPerPixel() const;
+    void fitAll();
+    void zoomOneToOne();
+
     /// Colour scale: map rates in [floor, ceil] × autoMax onto the palette (SDR-style).
     /// ceilFraction 0.02…2.0 (1.0 = full auto max; lower = more sensitive / “gain”).
     /// floorFraction 0…0.5 (cut noise floor).
@@ -177,9 +183,10 @@ private:
     struct TimeView {
         QRect imgRect;
         QRect dest;
-        int visible = 0;
-        int firstRow = 0;
-        int lastRow = 0; // inclusive
+        int visible = 0;   // pixel rows (= dest height / viewport image height)
+        int firstRow = 0;  // inclusive buffer index
+        int lastRow = 0;   // inclusive buffer index
+        float rpp = 1.0f;
     };
 
     QRect plotRect() const;
@@ -221,6 +228,10 @@ private:
     QRect selectionPixelRect(const TimeView &tv) const;
     bool selectionContainsWidgetPos(const QPoint &pos) const;
     int rowFromWidgetY(int y, const TimeView &tv) const;
+    int rowToWidgetY(int row, const TimeView &tv) const;
+    int binFirstRow(int pixelY, const TimeView &tv) const;
+    int binLastRowExclusive(int pixelY, const TimeView &tv) const;
+    void clampRowsPerPixel();
     /// Bit flags: Left=1 Right=2 Top=4 Bottom=8; 0 = none / inside handled separately.
     int hitTestSelectionEdge(const QPoint &pos) const;
     void applySelectionHoverCursor(const QPoint &pos);
@@ -243,7 +254,7 @@ private:
     static constexpr int kDefaultHistoryMinutes = 120; // 2 h
     static constexpr int kMaxIntegrate = 32;
     static constexpr int kMinRows = 64;
-    static constexpr int kMaxRowsCap = 28800; // 8 h @ 1 s / row
+    static constexpr int kMaxRowsCap = 172800; // 48 h @ 1 s / row
     static constexpr float kScaleHysteresis = 0.02f;
     static constexpr int kSelectDragThresholdPx = 4;
     static constexpr int kSelectEdgeHitPx = 7;
@@ -258,6 +269,8 @@ private:
     int m_integrate = 1;
     int m_channels = 0;
     int m_scrollFromNewest = 0;
+    float m_rowsPerPixel = 1.0f;
+    bool m_historyCapUnlocked = false;
 
     Snapshot m_baseline;
     bool m_hasBaseline = false;

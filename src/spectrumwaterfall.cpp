@@ -111,6 +111,67 @@ void SpectrumWaterfall::goToOldest()
     setScrollFromNewest(maxScroll());
 }
 
+void SpectrumWaterfall::setRowsPerPixel(float rpp, int anchorRow, int anchorWidgetY)
+{
+    const float before = m_rowsPerPixel;
+    m_rowsPerPixel = rpp;
+    clampRowsPerPixel();
+
+    if (anchorRow >= 0 && !m_rows.isEmpty()) {
+        TimeView tv;
+        // Provisional scroll 0 so dest geometry is known, then solve for scroll.
+        const int saved = m_scrollFromNewest;
+        m_scrollFromNewest = 0;
+        if (timeView(plotRect(), &tv) && tv.visible > 0) {
+            const int local = std::clamp(anchorWidgetY - tv.dest.top(), 0, tv.visible - 1);
+            const int firstWanted =
+                anchorRow - int(std::floor(double(local) * double(m_rowsPerPixel)));
+            const int visibleBuf = tv.lastRow - tv.firstRow + 1;
+            m_scrollFromNewest = m_rows.size() - visibleBuf - firstWanted;
+        } else {
+            m_scrollFromNewest = saved;
+        }
+    }
+
+    clampScroll();
+    if (qFuzzyCompare(m_rowsPerPixel, before) && anchorRow < 0) {
+        return;
+    }
+    rebuildViewportImage();
+    emitScrollSignals();
+    update();
+}
+
+void SpectrumWaterfall::fitAll()
+{
+    if (m_rows.isEmpty()) {
+        return;
+    }
+    m_rowsPerPixel = maxRowsPerPixel();
+    m_scrollFromNewest = 0;
+    clampRowsPerPixel();
+    clampScroll();
+    rebuildViewportImage();
+    emitScrollSignals();
+    update();
+}
+
+void SpectrumWaterfall::zoomOneToOne()
+{
+    if (m_rows.isEmpty() || m_rowsPerPixel <= 1.0001f) {
+        setRowsPerPixel(1.0f);
+        return;
+    }
+    TimeView tv;
+    int anchorRow = -1;
+    int anchorY = -1;
+    if (timeView(plotRect(), &tv)) {
+        anchorY = tv.dest.center().y();
+        anchorRow = rowFromWidgetY(anchorY, tv);
+    }
+    setRowsPerPixel(1.0f, anchorRow, anchorY);
+}
+
 void SpectrumWaterfall::setDeviceSerial(const QString &serial)
 {
     m_deviceSerial = serial.trimmed();
@@ -126,13 +187,34 @@ void SpectrumWaterfall::clampScroll()
     m_scrollFromNewest = qBound(0, m_scrollFromNewest, maxScroll());
 }
 
+float SpectrumWaterfall::maxRowsPerPixel() const
+{
+    const QRect imgRect = plotRect().adjusted(1, 1, -1, -1);
+    const int plotH = qMax(1, imgRect.height());
+    const int nRows = m_rows.size();
+    if (nRows <= plotH) {
+        return 1.0f;
+    }
+    return float(nRows) / float(plotH);
+}
+
+void SpectrumWaterfall::clampRowsPerPixel()
+{
+    const float lo = 1.0f;
+    const float hi = maxRowsPerPixel();
+    m_rowsPerPixel = qBound(lo, m_rowsPerPixel, hi);
+}
+
 int SpectrumWaterfall::maxScroll() const
 {
     const QRect imgRect = plotRect().adjusted(1, 1, -1, -1);
     const int plotH = qMax(1, imgRect.height());
     const int nRows = m_rows.size();
-    const int visible = qMin(nRows, plotH);
-    return qMax(0, nRows - visible);
+    const float rpp = qMax(1.0f, m_rowsPerPixel);
+    const int visibleBuf = (rpp <= 1.0001f)
+        ? qMin(nRows, plotH)
+        : qMin(nRows, qMax(1, int(std::ceil(double(plotH) * double(rpp)))));
+    return qMax(0, nRows - visibleBuf);
 }
 
 void SpectrumWaterfall::emitScrollSignals()
@@ -179,6 +261,9 @@ void SpectrumWaterfall::clear()
     m_integrateProgress = 0;
     const bool wasFollow = (m_scrollFromNewest == 0);
     m_scrollFromNewest = 0;
+    m_rowsPerPixel = 1.0f;
+    m_historyCapUnlocked = false;
+    recomputeCapacity();
     m_linkedCh = -1;
     m_selectDragging = false;
     m_selectMoving = false;
@@ -328,7 +413,32 @@ int SpectrumWaterfall::rowFromWidgetY(int y, const TimeView &tv) const
         return 0;
     }
     const int local = std::clamp(y - tv.dest.top(), 0, tv.visible - 1);
-    return tv.firstRow + local;
+    const int row = tv.firstRow + int(std::floor(double(local) * double(tv.rpp)));
+    return std::clamp(row, tv.firstRow, tv.lastRow);
+}
+
+int SpectrumWaterfall::rowToWidgetY(int row, const TimeView &tv) const
+{
+    if (tv.rpp <= 1.0001f) {
+        return tv.dest.top() + (row - tv.firstRow);
+    }
+    const int y = tv.dest.top()
+        + int(std::floor(double(row - tv.firstRow) / double(tv.rpp)));
+    return std::clamp(y, tv.dest.top(), tv.dest.bottom());
+}
+
+int SpectrumWaterfall::binFirstRow(int pixelY, const TimeView &tv) const
+{
+    const int local = std::clamp(pixelY, 0, tv.visible - 1);
+    const int row = tv.firstRow + int(std::floor(double(local) * double(tv.rpp)));
+    return std::clamp(row, tv.firstRow, tv.lastRow);
+}
+
+int SpectrumWaterfall::binLastRowExclusive(int pixelY, const TimeView &tv) const
+{
+    const int local = std::clamp(pixelY, 0, tv.visible - 1);
+    const int row = tv.firstRow + int(std::floor(double(local + 1) * double(tv.rpp)));
+    return std::clamp(row, tv.firstRow, tv.lastRow + 1);
 }
 
 bool SpectrumWaterfall::selectionContainsWidgetPos(const QPoint &pos) const
@@ -890,20 +1000,36 @@ bool SpectrumWaterfall::timeView(const QRect &plot, TimeView *tv) const
 
     const int nRows = m_rows.size();
     const int plotH = imgRect.height();
-    const int visible = qMin(nRows, plotH);
-    if (visible < 1) {
-        return false;
+    const float rpp = qMax(1.0f, m_rowsPerPixel);
+
+    if (rpp <= 1.0001f) {
+        const int visible = qMin(nRows, plotH);
+        if (visible < 1) {
+            return false;
+        }
+        const int scroll = qBound(0, m_scrollFromNewest, qMax(0, nRows - visible));
+        const int firstRow = nRows - visible - scroll;
+        const int destTop = imgRect.top() + plotH - visible;
+        tv->imgRect = imgRect;
+        tv->dest = QRect(imgRect.left(), destTop, imgRect.width(), visible);
+        tv->visible = visible;
+        tv->firstRow = firstRow;
+        tv->lastRow = firstRow + visible - 1;
+        tv->rpp = 1.0f;
+        return true;
     }
 
-    const int scroll = qBound(0, m_scrollFromNewest, qMax(0, nRows - visible));
-    const int firstRow = nRows - visible - scroll;
-    const int destTop = imgRect.top() + plotH - visible;
-
+    const int pixelRows = plotH;
+    const int visibleBuf = qMin(nRows, qMax(1, int(std::ceil(double(pixelRows) * double(rpp)))));
+    const int scroll = qBound(0, m_scrollFromNewest, qMax(0, nRows - visibleBuf));
+    const int firstRow = nRows - visibleBuf - scroll;
+    const int lastRow = firstRow + visibleBuf - 1;
     tv->imgRect = imgRect;
-    tv->dest = QRect(imgRect.left(), destTop, imgRect.width(), visible);
-    tv->visible = visible;
+    tv->dest = imgRect;
+    tv->visible = pixelRows;
     tv->firstRow = firstRow;
-    tv->lastRow = firstRow + visible - 1;
+    tv->lastRow = lastRow;
+    tv->rpp = rpp;
     return true;
 }
 
