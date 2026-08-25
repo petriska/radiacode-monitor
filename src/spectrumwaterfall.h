@@ -291,7 +291,7 @@ private:
     float m_a1 = 0;
     float m_a2 = 0;
 
-    float m_displayMax = 1.0f; // auto max over history (reference)
+    float m_displayMax = 1e-6f; // auto max over history (reference)
     float m_colorCeilFrac = 1.0f;  // colour map top = displayMax * ceil
     float m_colorFloorFrac = 0.0f; // colour map bottom
     bool m_colorBarDragging = false;

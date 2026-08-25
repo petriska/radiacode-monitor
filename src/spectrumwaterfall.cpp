@@ -53,8 +53,16 @@ void SpectrumWaterfall::recomputeCapacity()
     const int secPerRow = qMax(1, m_integrate);
     const int rows = int((qint64(m_historyMinutes) * 60) / secPerRow);
     m_maxRows = qBound(kMinRows, rows, kMaxRowsCap);
+    float droppedPeak = 0.0f;
+    int dropped = 0;
     while (m_rows.size() > m_maxRows) {
+        droppedPeak = std::max(droppedPeak, m_rows.first().peak);
         m_rows.removeFirst();
+        ++dropped;
+    }
+    if (dropped > 0
+        && droppedPeak >= m_displayMax * (1.0f - kScaleHysteresis)) {
+        m_displayMax = maxOfRowPeaks();
     }
     clampScroll();
 }
@@ -253,7 +261,7 @@ void SpectrumWaterfall::clear()
 {
     m_rows.clear();
     m_channels = 0;
-    m_displayMax = 1.0f;
+    m_displayMax = 1e-6f;
     m_image = QImage();
     m_viewportFirstRow = -1;
     m_viewportCount = 0;
@@ -1128,7 +1136,10 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
 
     const float oldMax = m_displayMax;
     float newMax = oldMax;
-    if (newRowPeak > oldMax * (1.0f + kScaleHysteresis) || oldMax < 1e-6f) {
+    // Empty-buffer / first-row: adopt peak (bootstrap floor is 1e-6f, not 1.0f).
+    if (m_rows.size() == 1 || oldMax <= 1e-6f) {
+        newMax = std::max(1e-6f, newRowPeak);
+    } else if (newRowPeak > oldMax * (1.0f + kScaleHysteresis)) {
         newMax = std::max(oldMax, newRowPeak);
     }
     if (dropped > 0
@@ -1137,7 +1148,7 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
     }
 
     const bool scaleChanged =
-        (oldMax < 1e-6f)
+        (oldMax <= 1e-6f)
         || (newMax > oldMax * (1.0f + kScaleHysteresis))
         || (newMax < oldMax * (1.0f - kScaleHysteresis));
 
@@ -1219,7 +1230,7 @@ void SpectrumWaterfall::pushSpectrum(const QVector<quint32> &counts, quint32 dur
         m_hasBaseline = false;
         m_baseline = Snapshot{};
         m_integrateProgress = 0;
-        m_displayMax = 1.0f;
+        m_displayMax = 1e-6f;
         m_image = QImage();
         m_viewportFirstRow = -1;
         m_viewportCount = 0;
