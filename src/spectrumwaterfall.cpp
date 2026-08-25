@@ -289,7 +289,7 @@ void SpectrumWaterfall::zoomToSelection()
     const double x1 = double(qBound(int(x0) + 1, m_selection.ch1, m_channels));
     setViewRange(x0, x1);
     emit energyViewRequested(x0, x1);
-    update();
+    clearSelection();
 }
 
 void SpectrumWaterfall::resetEnergyView()
@@ -1846,8 +1846,8 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
     QAction *zoomSelAct = menu.addAction(tr("Zoom to selection"));
     zoomSelAct->setEnabled(m_selection.valid);
     zoomSelAct->setToolTip(
-        tr("Fill the spectrogram with the selected time × energy region.\n"
-           "Time zoom is at most 1:1 (one row = one pixel). Spectrum X follows."));
+        tr("Fill the spectrogram with the selected time × energy region,\n"
+           "then clear the rectangle. Time zoom is at most 1:1. Spectrum X follows."));
 
     QAction *fullEnergyAct = menu.addAction(tr("Reset energy zoom"));
     const bool energyZoomed = m_channels > 0

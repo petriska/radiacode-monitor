@@ -75,7 +75,7 @@ public:
     float maxRowsPerPixel() const;
     void fitAll();
     void zoomOneToOne();
-    /// Time-zoom so the selection rows fill the pane (max 1:1); X range follows the box.
+    /// Time-zoom so the selection rows fill the pane (max 1:1); X follows the box; then clear it.
     void zoomToSelection();
     /// Restore X to all channels (spectrum plot follows via energyViewRequested).
     void resetEnergyView();
