@@ -24,6 +24,10 @@ public:
     enum class DisplayMode { Live, Net };
     Q_ENUM(DisplayMode)
 
+    /// How rates in [floor, ceil] map onto the palette.
+    enum class ColorMap { Linear, Log };
+    Q_ENUM(ColorMap)
+
     explicit SpectrumWaterfall(QWidget *parent = nullptr);
 
     /// Visible channel range [xMin, xMax) — typically mirrored from SpectrumWidget zoom.
@@ -74,12 +78,16 @@ public:
 
     /// Colour scale: map rates in [floor, ceil] × autoMax onto the palette (SDR-style).
     /// ceilFraction 0.02…2.0 (1.0 = full auto max; lower = more sensitive / “gain”).
-    /// floorFraction 0…0.5 (cut noise floor).
+    /// floorFraction 0…ceil × 0.95 (cut noise floor; window may sit anywhere below ceil).
     void setColorCeilFraction(float frac);
     float colorCeilFraction() const { return m_colorCeilFrac; }
     void setColorFloorFraction(float frac);
     float colorFloorFraction() const { return m_colorFloorFrac; }
     void resetColorScale();
+    /// Set floor and ceil together (window drag). Applies the same clamps as the setters.
+    void setColorWindow(float floorFrac, float ceilFrac);
+    void setColorMap(ColorMap map);
+    ColorMap colorMap() const { return m_colorMap; }
     /// Auto matrix max used as the reference for floor/ceil (cps).
     float autoDisplayMax() const { return m_displayMax; }
 
@@ -205,9 +213,15 @@ private:
     QRgb rateToColor(float rate) const;
     float colorMapMin() const;
     float colorMapMax() const;
+    enum class ColorBarDrag { None, Floor, Ceil, Window };
+
     QRect colorBarRect() const;
     void drawColorBar(QPainter &p, const QRect &plot) const;
-    void applyColorScaleFromBarY(int y, bool floorHandle);
+    float fracFromBarY(int y) const;          // 0 at bottom, 1 at top (auto-max)
+    int yFromBarFrac(float frac) const;       // visual; frac clamped to [0, 1]
+    ColorBarDrag hitTestColorBar(const QPoint &pos) const;
+    void applyColorBarDrag(int y);
+    void setColorBarHoverCursor(const QPoint &pos);
     void recomputeCapacity();
     void clampScroll();
     int maxScroll() const;
@@ -261,7 +275,8 @@ private:
     static constexpr int kColorBarGap = 4;
     static constexpr float kColorCeilMin = 0.02f;
     static constexpr float kColorCeilMax = 2.0f;
-    static constexpr float kColorFloorMax = 0.5f;
+    static constexpr float kColorMinGapFrac = 0.05f; // floor ≤ ceil × (1 − this)
+    static constexpr int kColorBarEdgeHitPx = 6;
     static constexpr int kMinHistoryMinutes = 15;
     static constexpr int kMaxHistoryMinutes = 8 * 60;
     static constexpr int kDefaultHistoryMinutes = 120; // 2 h
@@ -302,8 +317,12 @@ private:
     float m_displayMax = 1e-6f; // auto max over history (reference)
     float m_colorCeilFrac = 1.0f;  // colour map top = displayMax * ceil
     float m_colorFloorFrac = 0.0f; // colour map bottom
+    ColorMap m_colorMap = ColorMap::Linear;
     bool m_colorBarDragging = false;
-    bool m_colorBarDragFloor = false; // false = drag ceil (top); true = floor (bottom)
+    ColorBarDrag m_colorBarDragMode = ColorBarDrag::None;
+    float m_windowDragFloor0 = 0.0f;
+    float m_windowDragCeil0 = 1.0f;
+    float m_windowDragPressFrac = 0.0f;
     /// Viewport-sized colour cache (not the full multi-hour buffer).
     QImage m_image;
     int m_viewportFirstRow = -1; // first history row currently baked into m_image

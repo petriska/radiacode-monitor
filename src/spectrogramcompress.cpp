@@ -4,7 +4,19 @@
 
 #include <cstring>
 
-#include <QtZlib/zlib.h>
+// Distro Qt (Ubuntu/Debian) is built against system zlib — there is no QtZlib.
+// Official Qt kits ship headers as <QtZlib/zlib.h>.
+#if defined(__has_include)
+#  if __has_include(<zlib.h>)
+#    include <zlib.h>
+#  elif __has_include(<QtZlib/zlib.h>)
+#    include <QtZlib/zlib.h>
+#  else
+#    error "zlib headers not found. Ubuntu/Debian: sudo apt install zlib1g-dev"
+#  endif
+#else
+#  include <zlib.h>
+#endif
 
 namespace SpectrogramCompress {
 namespace {

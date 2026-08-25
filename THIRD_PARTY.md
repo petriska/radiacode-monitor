@@ -69,6 +69,19 @@ See the library repository for its full `LICENSE` and protocol attribution notes
 
 ---
 
+## zlib
+
+| | |
+|---|---|
+| **Component** | zlib |
+| **License** | **zlib License** |
+| **How used** | Linked for gzip of spectrogram history (`.rcsg.gz`). Distro builds use the system library (`libz`); official Qt kits may use bundled QtZlib headers |
+| **Website** | https://zlib.net/ |
+| **License text** | https://zlib.net/zlib_license.html |
+| **Source** | https://github.com/madler/zlib |
+
+---
+
 ## Protocol / community reference (not bundled source)
 
 Device behaviour and the wire protocol were implemented with reference to

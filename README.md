@@ -30,10 +30,11 @@ Simple **Qt 6 Widgets** desktop app for [RadiaCode](https://www.radiacode.com/) 
 - Qt 6 Core + Widgets
 - [qtradiacode](../qtradiacode) library (sibling directory by default)
 - libusb-1.0 (via QtRadiacode)
+- zlib (Ubuntu/Debian: `zlib1g-dev`; official Qt kits bundle `QtZlib`)
 
 ## Build
 
-**Requirements:** CMake 3.21+, Qt 6 (Core + Widgets), C++17 compiler, libusb-1.0 (via QtRadiacode).
+**Requirements:** CMake 3.21+, Qt 6 (Core + Widgets), C++17 compiler, libusb-1.0 (via QtRadiacode), zlib.
 
 ### From Git clone (developers)
 

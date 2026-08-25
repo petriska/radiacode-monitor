@@ -9,7 +9,7 @@
 #
 # Requirements (Ubuntu 24.04 example):
 #   sudo apt install build-essential cmake ninja-build \
-#     qt6-base-dev qt6-connectivity-dev libusb-1.0-0-dev \
+#     qt6-base-dev qt6-connectivity-dev libusb-1.0-0-dev zlib1g-dev \
 #     dpkg-dev file
 #
 # Expects a local sibling qtradiacode tree (../qtradiacode) or FetchContent.

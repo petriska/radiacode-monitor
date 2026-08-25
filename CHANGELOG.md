@@ -39,6 +39,8 @@
 - Load spectrogram history keeps up to **48 h** at 1 s/row (172 800 rows); no longer
   trims to the live History combo. Files longer than the cap load the newest rows
   and warn. Disconnect does not clear the spectrogram buffer (Reset spectrum does).
+- Spectrogram **colour mapping** (Spectrum tab): **Linear** or **Log** (blue stretched,
+  red only on peaks). Saved in settings.
 
 ### Fixed
 
@@ -49,9 +51,18 @@
 - Disconnect drops the live ΔN baseline without wiping spectrogram history.
 - History combo is disabled after loading a long `.rcsg` (until **Reset spectrum**).
 - Zoomed-out live follow rebuilds the viewport when the first visible row advances.
+- Ubuntu/Debian build: spectrogram gzip uses **system zlib** (`zlib1g-dev`). Distro Qt
+  does not ship `QtZlib` (that header exists only in official Qt kits).
 
 ### Changed
 
+- ROI table: dropped **Counts** and **cps** columns so the narrow setup panel fits
+  (values remain on the chart and in CSV export).
+- Waterfall **colour bar** (SDR Console): palette is squeezed between floor and ceil;
+  outside the window = black. Drag edges to resize; drag the middle to slide the
+  window. Bar axis is 0…auto-max (not 0…200 %).
+- Waterfall **palette**: SDR/GQRX heatmap (black → navy → cyan → white → yellow →
+  red → dark red). Below the window stays black; above clips to dark red.
 - Waterfall Net mode applies BG rate at display time (live rates stored once); no longer
   rebuilds the full history from cumulative spectrum snapshots.
 - **UI layout:** collapsible **setup panel** (Device / Live / Acquisition / ROI) on the

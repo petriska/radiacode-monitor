@@ -144,6 +144,7 @@ private:
     QSpinBox *m_waterfallIntegrateSpin = nullptr;
     QComboBox *m_waterfallHistoryCombo = nullptr;
     QSpinBox *m_waterfallColorScaleSpin = nullptr;
+    QComboBox *m_waterfallColorMapCombo = nullptr;
     QPushButton *m_waterfallLiveBtn = nullptr;
     QPushButton *m_waterfallFitAllBtn = nullptr;
     QCheckBox *m_recordSpectrogramCheck = nullptr;
