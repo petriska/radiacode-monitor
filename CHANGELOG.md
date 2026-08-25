@@ -6,6 +6,8 @@
 
 - Waterfall context menu **Zoom to selection** — time-zoom the box into the pane
   (max 1:1) and match the spectrum energy range.
+- **Reset energy zoom** — restore the full channel / keV range (also: double-click
+  the spectrum plot).
 
 ## [0.4.0] — 2026-08-25
 

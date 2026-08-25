@@ -292,6 +292,15 @@ void SpectrumWaterfall::zoomToSelection()
     update();
 }
 
+void SpectrumWaterfall::resetEnergyView()
+{
+    if (m_channels <= 0) {
+        return;
+    }
+    setViewRange(0.0, double(m_channels));
+    emit energyViewRequested(0.0, double(m_channels));
+}
+
 void SpectrumWaterfall::setDeviceSerial(const QString &serial)
 {
     m_deviceSerial = serial.trimmed();
@@ -1840,6 +1849,14 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         tr("Fill the spectrogram with the selected time × energy region.\n"
            "Time zoom is at most 1:1 (one row = one pixel). Spectrum X follows."));
 
+    QAction *fullEnergyAct = menu.addAction(tr("Reset energy zoom"));
+    const bool energyZoomed = m_channels > 0
+        && (m_xMin > 0.5 || m_xMax < double(m_channels) - 0.5);
+    fullEnergyAct->setEnabled(energyZoomed);
+    fullEnergyAct->setToolTip(
+        tr("Show the full energy / channel range on the spectrogram and spectrum.\n"
+           "Same as double-click on the spectrum plot."));
+
     QAction *specAct = menu.addAction(tr("Spectrum from selection…"));
     specAct->setEnabled(m_selection.valid);
     specAct->setToolTip(
@@ -1900,6 +1917,8 @@ void SpectrumWaterfall::contextMenuEvent(QContextMenuEvent *event)
         resetColorScale();
     } else if (chosen == zoomSelAct) {
         zoomToSelection();
+    } else if (chosen == fullEnergyAct) {
+        resetEnergyView();
     } else if (chosen == specAct) {
         emit extractSpectrumRequested();
     } else if (chosen == mcsAct) {

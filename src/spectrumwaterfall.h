@@ -77,6 +77,8 @@ public:
     void zoomOneToOne();
     /// Time-zoom so the selection rows fill the pane (max 1:1); X range follows the box.
     void zoomToSelection();
+    /// Restore X to all channels (spectrum plot follows via energyViewRequested).
+    void resetEnergyView();
 
     /// Colour scale: map rates in [floor, ceil] × autoMax onto the palette (SDR-style).
     /// ceilFraction 0.02…2.0 (1.0 = full auto max; lower = more sensitive / “gain”).
