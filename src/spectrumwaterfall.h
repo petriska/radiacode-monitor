@@ -205,6 +205,7 @@ private:
     int maxScroll() const;
     void ensureViewportImage(int visibleRows);
     void rebuildViewportImage();
+    void paintImageRow(int pixelY, const TimeView &tv);
     void appendDisplayRow(Row &&row);
     bool makeRow(const Snapshot &prev, const Snapshot &cur, Row *out) const;
     float matrixMaxRate() const;

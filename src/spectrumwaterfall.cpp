@@ -40,10 +40,11 @@ SpectrumWaterfall::SpectrumWaterfall(QWidget *parent)
         "Drag inside selection: move the box · drag edges/corners: resize.\n"
         "Esc / click outside / right-click → Clear selection.\n"
         "Mouse wheel: scroll history · Double-click: jump to live.\n"
+        "Ctrl+wheel: zoom time (max 1:1) · Fit all / Zoom 1:1 in the menu.\n"
         "Colour bar (right): drag top = sensitivity (ceil), bottom = floor;\n"
         "wheel over bar = scale; double-click bar = reset to auto 0…max.\n"
         "Right-click menu: Follow live, Go to oldest, PNG, Save/Load history.\n"
-        "Time is 1:1 (one row = one pixel)."));
+        "Maximum time zoom is 1:1 (one row = one pixel)."));
 }
 
 void SpectrumWaterfall::recomputeCapacity()
@@ -959,6 +960,25 @@ void SpectrumWaterfall::ensureViewportImage(int visibleRows)
     m_viewportCount = 0;
 }
 
+void SpectrumWaterfall::paintImageRow(int pixelY, const TimeView &tv)
+{
+    if (m_image.isNull() || pixelY < 0 || pixelY >= m_image.height()) {
+        return;
+    }
+    auto *line = reinterpret_cast<QRgb *>(m_image.scanLine(pixelY));
+    const int r0 = binFirstRow(pixelY, tv);
+    const int r1 = binLastRowExclusive(pixelY, tv);
+    for (int x = 0; x < m_channels; ++x) {
+        float mx = 0.0f;
+        for (int r = r0; r < r1; ++r) {
+            const Row &row = m_rows.at(r);
+            const float live = (x < row.rates.size()) ? row.rates[x] : 0.0f;
+            mx = std::max(mx, displayRate(live, x));
+        }
+        line[x] = rateToColor(mx);
+    }
+}
+
 void SpectrumWaterfall::rebuildViewportImage()
 {
     TimeView tv;
@@ -975,14 +995,7 @@ void SpectrumWaterfall::rebuildViewportImage()
     }
 
     for (int i = 0; i < tv.visible; ++i) {
-        const int rowIdx = tv.firstRow + i;
-        const Row &row = m_rows.at(rowIdx);
-        auto *line = reinterpret_cast<QRgb *>(m_image.scanLine(i));
-        const int n = qMin(m_channels, row.rates.size());
-        for (int x = 0; x < m_channels; ++x) {
-            const float live = (x < n) ? row.rates[x] : 0.0f;
-            line[x] = rateToColor(displayRate(live, x));
-        }
+        paintImageRow(i, tv);
     }
     m_viewportFirstRow = tv.firstRow;
     m_viewportCount = tv.visible;
@@ -1105,8 +1118,24 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
         return;
     }
 
-    // Live follow + stable scale: scroll viewport image + paint new bottom line.
     m_displayMax = newMax;
+
+    // Zoomed-out live follow: only recompute the last (newest) image bin.
+    if (m_rowsPerPixel > 1.0001f && wasFollow && !scaleChanged) {
+        TimeView tv;
+        if (timeView(plotRect(), &tv) && !m_image.isNull()
+            && m_image.height() == tv.visible && m_image.width() == m_channels) {
+            paintImageRow(tv.visible - 1, tv);
+            m_viewportFirstRow = tv.firstRow;
+            m_viewportCount = tv.visible;
+            refreshCursorAfterScroll(droppedOldest);
+            emitScrollSignals();
+            update();
+            return;
+        }
+    }
+
+    // 1:1 live follow + stable scale: scroll viewport image + paint new bottom line.
     TimeView tv;
     if (!timeView(plotRect(), &tv)) {
         rebuildViewportImage();
@@ -1119,7 +1148,8 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
     // Incremental only when the cache already matches this viewport height and
     // was showing the previous live window (firstRow advanced by 1).
     const bool liveScrollOk =
-        !m_image.isNull()
+        m_rowsPerPixel <= 1.0001f
+        && !m_image.isNull()
         && m_image.width() == m_channels
         && m_image.height() == tv.visible
         && m_viewportCount == tv.visible
@@ -1129,19 +1159,12 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
         rebuildViewportImage();
     } else {
         const int h = m_image.height();
-        const int w = m_image.width();
         if (h >= 2) {
             const int bpl = m_image.bytesPerLine();
             uchar *bits = m_image.bits();
             std::memmove(bits, bits + bpl, size_t(bpl) * size_t(h - 1));
         }
-        const Row &newest = m_rows.last();
-        auto *line = reinterpret_cast<QRgb *>(m_image.scanLine(h - 1));
-        const int n = qMin(w, newest.rates.size());
-        for (int x = 0; x < w; ++x) {
-            const float live = (x < n) ? newest.rates[x] : 0.0f;
-            line[x] = rateToColor(displayRate(live, x));
-        }
+        paintImageRow(h - 1, tv);
         m_viewportFirstRow = tv.firstRow;
         m_viewportCount = tv.visible;
     }
@@ -2047,18 +2070,19 @@ bool SpectrumWaterfall::exportAsPng(PngExportScope scope, QWidget *dialogParent)
             return false;
         }
         firstRow = tv.firstRow;
-        nRows = tv.visible;
+        nRows = tv.lastRow - tv.firstRow + 1;
         ch0 = qBound(0, int(std::floor(m_xMin)), m_channels);
         ch1 = qBound(ch0 + 1, int(std::ceil(m_xMax)), m_channels);
     }
 
     const int lastRow = firstRow + nRows - 1;
 
-    // Large full-history images: confirm when height is big.
-    if (scope == PngExportScope::FullHistory && nRows >= 2000) {
+    // Large images (full history, or View after Fit all): confirm when height is big.
+    if (nRows >= 2000) {
         const auto ans = QMessageBox::question(
             dialogParent ? dialogParent : this,
-            tr("Export full history as PNG"),
+            scope == PngExportScope::FullHistory ? tr("Export full history as PNG")
+                                                 : tr("Export spectrogram view as PNG"),
             tr("The history buffer has %1 rows × %2 channels.\n"
                "The PNG will be about %3×%4 pixels and may take a moment.\n\n"
                "Continue?")
@@ -2315,12 +2339,34 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
 
     const QFontMetrics fm = p.fontMetrics();
 
-    // Mode / follow badge (top-left of plot).
+    // Mode / follow / time-scale badge (top-left of plot).
     {
         QString badge = netModeActive() ? tr("Net") : tr("Live");
         if (!isFollowingLive()) {
             badge = tr("%1 · hist").arg(badge);
         }
+        QString scale;
+        if (tv.rpp <= 1.0001f) {
+            scale = tr("1:1");
+        } else {
+            const QDateTime t0 = m_rows.at(tv.firstRow).wallTime;
+            const QDateTime t1 = m_rows.at(tv.lastRow).wallTime;
+            if (t0.isValid() && t1.isValid()) {
+                const qint64 sec = qAbs(t0.secsTo(t1));
+                if (sec >= 3600) {
+                    scale = tr("~%1 h").arg(QString::number(double(sec) / 3600.0, 'f', 1));
+                } else {
+                    scale = tr("~%1 min").arg(qMax(1, int((sec + 30) / 60)));
+                }
+            } else {
+                quint32 sum = 0;
+                for (int r = tv.firstRow; r <= tv.lastRow; ++r) {
+                    sum += m_rows.at(r).intervalSec;
+                }
+                scale = tr("~%1 min").arg(qMax(1, int((sum + 30) / 60)));
+            }
+        }
+        badge = tr("%1 · %2").arg(badge, scale);
         const int pad = 4;
         const int tw = fm.horizontalAdvance(badge) + 2 * pad;
         const int th = fm.height() + 2 * pad;
@@ -2334,15 +2380,15 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
         p.drawText(br.left() + pad, br.top() + pad + fm.ascent(), badge);
     }
 
-    // Y axis: wall-clock HH:mm for oldest / mid / newest *visible* rows.
+    // Y axis: wall-clock HH:mm for oldest / mid / newest *visible* buffer rows.
     {
         QVector<int> tickRows;
         tickRows.append(tv.firstRow);
         if (tv.visible >= 3) {
-            tickRows.append(tv.firstRow + tv.visible / 2);
+            tickRows.append((tv.firstRow + tv.lastRow) / 2);
         }
         if (tv.visible >= 2) {
-            tickRows.append(tv.firstRow + tv.visible - 1);
+            tickRows.append(tv.lastRow);
         }
 
         QString lastLabel;
@@ -2360,7 +2406,7 @@ void SpectrumWaterfall::paintEvent(QPaintEvent *)
             }
             lastLabel = label;
 
-            int y = tv.dest.top() + (rowIdx - tv.firstRow);
+            int y = rowToWidgetY(rowIdx, tv);
             y = std::clamp(y, tv.imgRect.top() + fm.ascent() / 2,
                            tv.imgRect.bottom() - fm.descent());
 
