@@ -645,7 +645,7 @@ void SpectrumWaterfall::setBackground(const QVector<quint32> &counts, quint32 du
 {
     m_bgCounts = counts;
     m_bgDurationSec = durationSec;
-    m_displayMax = matrixMaxRate();
+    recomputeAllRowPeaks();
     rebuildViewportImage();
     update();
 }
@@ -654,7 +654,7 @@ void SpectrumWaterfall::clearBackground()
 {
     m_bgCounts.clear();
     m_bgDurationSec = 0;
-    m_displayMax = matrixMaxRate();
+    recomputeAllRowPeaks();
     rebuildViewportImage();
     update();
 }
@@ -665,7 +665,7 @@ void SpectrumWaterfall::setDisplayMode(DisplayMode mode)
         return;
     }
     m_mode = mode;
-    m_displayMax = matrixMaxRate();
+    recomputeAllRowPeaks();
     rebuildViewportImage();
     update();
 }
@@ -927,19 +927,38 @@ bool SpectrumWaterfall::makeRow(const Snapshot &prev, const Snapshot &cur, Row *
     return true;
 }
 
-float SpectrumWaterfall::matrixMaxRate() const
+float SpectrumWaterfall::rowPeakValue(const Row &row) const
 {
     float mx = 0.0f;
-    for (const Row &row : m_rows) {
-        const int n = row.rates.size();
-        for (int ch = 0; ch < n; ++ch) {
-            mx = std::max(mx, displayRate(row.rates[ch], ch));
-        }
-    }
-    if (mx < 1e-6f) {
-        mx = 1e-6f;
+    const int n = qMin(m_channels, row.rates.size());
+    for (int ch = 0; ch < n; ++ch) {
+        mx = std::max(mx, displayRate(row.rates[ch], ch));
     }
     return mx;
+}
+
+void SpectrumWaterfall::recomputeAllRowPeaks()
+{
+    float mx = 1e-6f;
+    for (Row &row : m_rows) {
+        row.peak = rowPeakValue(row);
+        mx = std::max(mx, row.peak);
+    }
+    m_displayMax = mx;
+}
+
+float SpectrumWaterfall::maxOfRowPeaks() const
+{
+    float mx = 1e-6f;
+    for (const Row &row : m_rows) {
+        mx = std::max(mx, row.peak);
+    }
+    return mx;
+}
+
+float SpectrumWaterfall::matrixMaxRate() const
+{
+    return maxOfRowPeaks();
 }
 
 void SpectrumWaterfall::ensureViewportImage(int visibleRows)
@@ -1086,9 +1105,14 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
         m_recorder->appendRow(out, nullptr);
     }
 
+    row.peak = rowPeakValue(row);
+    const float newRowPeak = row.peak;
     m_rows.append(std::move(row));
+
+    float droppedPeak = 0.0f;
     int dropped = 0;
     while (m_rows.size() > m_maxRows) {
+        droppedPeak = std::max(droppedPeak, m_rows.first().peak);
         m_rows.removeFirst();
         ++dropped;
     }
@@ -1102,8 +1126,16 @@ void SpectrumWaterfall::appendDisplayRow(Row &&row)
     }
     clampScroll();
 
-    const float newMax = matrixMaxRate();
     const float oldMax = m_displayMax;
+    float newMax = oldMax;
+    if (newRowPeak > oldMax * (1.0f + kScaleHysteresis) || oldMax < 1e-6f) {
+        newMax = std::max(oldMax, newRowPeak);
+    }
+    if (dropped > 0
+        && droppedPeak >= oldMax * (1.0f - kScaleHysteresis)) {
+        newMax = maxOfRowPeaks();
+    }
+
     const bool scaleChanged =
         (oldMax < 1e-6f)
         || (newMax > oldMax * (1.0f + kScaleHysteresis))
@@ -1919,7 +1951,7 @@ bool SpectrumWaterfall::loadHistory(QWidget *dialogParent)
     m_baseline = Snapshot{};
     m_integrateProgress = 0;
     m_scrollFromNewest = 0;
-    m_displayMax = matrixMaxRate();
+    recomputeAllRowPeaks(); // sets each Row::peak (required before maxOfRowPeaks)
     m_xMin = 0;
     m_xMax = m_channels;
     m_viewportFirstRow = -1;

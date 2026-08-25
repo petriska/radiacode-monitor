@@ -177,6 +177,7 @@ private:
         quint32 liveTimeSec = 0;
         quint32 intervalSec = 0;
         QDateTime wallTime;
+        float peak = 0.0f;          // max displayRate on this row (current Live/Net)
     };
 
     /// 1:1 bottom-aligned time view into the history buffer.
@@ -208,6 +209,9 @@ private:
     void paintImageRow(int pixelY, const TimeView &tv);
     void appendDisplayRow(Row &&row);
     bool makeRow(const Snapshot &prev, const Snapshot &cur, Row *out) const;
+    float rowPeakValue(const Row &row) const;
+    void recomputeAllRowPeaks();
+    float maxOfRowPeaks() const;
     float matrixMaxRate() const;
     bool timeView(const QRect &plot, TimeView *tv) const;
     void refreshCursorAfterScroll(bool droppedOldest);
