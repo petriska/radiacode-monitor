@@ -121,7 +121,8 @@ void SpectrumWidget::clear()
     m_xMax = 1;
     m_linkedCh = -1;
     clearCursor();
-    emitViewRange();
+    // Do not emit viewRangeChanged(0, 1) — that would collapse a loaded
+    // spectrogram to a single stretched channel (horizontal stripe artifacts).
     update();
 }
 
@@ -140,14 +141,14 @@ void SpectrumWidget::setLinkedChannel(int channel)
 
 void SpectrumWidget::resetView()
 {
-    if (channelCount() > 0) {
-        m_xMin = 0;
-        m_xMax = static_cast<double>(channelCount());
-    } else {
-        m_xMin = 0;
-        m_xMax = 1;
+    if (channelCount() <= 0) {
+        emit viewResetRequested();
+        return;
     }
+    m_xMin = 0;
+    m_xMax = static_cast<double>(channelCount());
     emitViewRange();
+    emit viewResetRequested();
     update();
 }
 

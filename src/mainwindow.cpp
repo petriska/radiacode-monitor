@@ -471,6 +471,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_spectrum, &SpectrumWidget::viewRangeChanged, m_waterfall,
             &SpectrumWaterfall::setViewRange);
+    connect(m_spectrum, &SpectrumWidget::viewResetRequested, this, [this] {
+        if (m_waterfall) {
+            m_waterfall->resetEnergyView();
+        }
+    });
     // Cross-link cursors: hover on one highlights the same channel on the other.
     connect(m_spectrum, &SpectrumWidget::cursorInfoChanged, this,
             [this](int channel, double energyKeV, quint32 counts) {

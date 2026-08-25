@@ -45,6 +45,9 @@ signals:
     void cursorInfoChanged(int channel, double energyKeV, quint32 counts);
     /// Visible channel range [xMin, xMax) after zoom/pan/reset.
     void viewRangeChanged(double xMin, double xMax);
+    /// Double-click / reset view. Emitted even when the plot has no spectrum
+    /// (so a loaded spectrogram can restore full energy).
+    void viewResetRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;

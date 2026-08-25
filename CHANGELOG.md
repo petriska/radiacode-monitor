@@ -9,6 +9,11 @@
 - **Reset energy zoom** — restore the full channel / keV range (also: double-click
   the spectrum plot).
 
+### Fixed
+
+- Double-click on an empty spectrum no longer zooms the spectrogram to one
+  channel (full-width horizontal stripes). It restores the full energy range.
+
 ## [0.4.0] — 2026-08-25
 
 ### Added
